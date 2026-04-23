@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Linda — WIG</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Georgia', serif;
+      background: #0c0c0c;
+      color: #e2ddd4;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    header {
+      padding: 18px 32px;
+      border-bottom: 1px solid #1c1c1c;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .brand h1 {
+      font-size: 1rem;
+      font-weight: normal;
+      letter-spacing: 0.2em;
+      color: #c4b08a;
+    }
+
+    .brand p {
+      font-size: 0.65rem;
+      letter-spacing: 0.25em;
+      color: #444;
+      text-transform: uppercase;
+      margin-top: 3px;
+    }
+
+    .principal-select {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .principal-label {
+      font-size: 0.65rem;
+      letter-spacing: 0.2em;
+      color: #3a3a3a;
+      text-transform: uppercase;
+      margin-right: 6px;
+    }
+
+    .p-btn {
+      padding: 5px 14px;
+      background: transparent;
+      border: 1px solid #252525;
+      color: #555;
+      font-family: inherit;
+      font-size: 0.75rem;
+      letter-spacing: 0.1em;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .p-btn.active {
+      border-color: #c4b08a;
+      color: #c4b08a;
+      background: rgba(196, 176, 138, 0.04);
+    }
+
+    .p-btn:hover:not(.active) {
+      border-color: #333;
+      color: #777;
+    }
+
+    .chat-wrap {
+      flex: 1;
+      overflow-y: auto;
+      padding: 40px 0;
+    }
+
+    .chat-inner {
+      max-width: 700px;
+      margin: 0 auto;
+      padding: 0 32px;
+    }
+
+    .message {
+      margin-bottom: 36px;
+    }
+
+    .msg-label {
+      font-size: 0.62rem;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+      color: #333;
+    }
+
+    .message.linda .msg-label { color: #c4b08a; }
+
+    .msg-text {
+      font-size: 0.93rem;
+      line-height: 1.75;
+      color: #e2ddd4;
+    }
+
+    .message.user .msg-text {
+      color: #666;
+      font-style: italic;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 80px 20px;
+      color: #2a2a2a;
+      font-size: 0.8rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+    }
+
+    .status-row {
+      max-width: 700px;
+      margin: 0 auto;
+      padding: 4px 32px;
+      font-size: 0.62rem;
+      letter-spacing: 0.18em;
+      color: #2e2e2e;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .input-area {
+      border-top: 1px solid #1c1c1c;
+      padding: 18px 0 22px;
+      flex-shrink: 0;
+    }
+
+    .input-inner {
+      max-width: 700px;
+      margin: 0 auto;
+      padding: 0 32px;
+      display: flex;
+      gap: 14px;
+      align-items: flex-end;
+    }
+
+    textarea {
+      flex: 1;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid #1e1e1e;
+      color: #e2ddd4;
+      font-family: inherit;
+      font-size: 0.88rem;
+      line-height: 1.65;
+      padding: 6px 0;
+      resize: none;
+      outline: none;
+      min-height: 40px;
+      max-height: 130px;
+      transition: border-color 0.15s;
+    }
+
+    textarea:focus { border-color: #2e2e2e; }
+    textarea::placeholder { color: #2a2a2a; }
+
+    .send-btn {
+      background: transparent;
+      border: 1px solid #252525;
+      color: #555;
+      padding: 7px 18px;
+      font-family: inherit;
+      font-size: 0.7rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .send-btn:hover:not(:disabled) {
+      border-color: #c4b08a;
+      color: #c4b08a;
+    }
+
+    .send-btn:disabled { opacity: 0.2; cursor: not-allowed; }
+
+    .brief-btn {
+      background: transparent;
+      border: none;
+      color: #2e2e2e;
+      font-family: inherit;
+      font-size: 0.62rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      cursor: pointer;
+      padding: 7px 0;
+      flex-shrink: 0;
+      transition: color 0.15s;
+    }
+
+    .brief-btn:hover { color: #555; }
+
+    ::-webkit-scrollbar { width: 3px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #1e1e1e; }
+
+    @media (max-width: 600px) {
+      header { padding: 14px 20px; }
+      .chat-inner, .input-inner, .status-row { padding-left: 20px; padding-right: 20px; }
+      .principal-label { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>LINDA</h1>
+    <p>WIG Chief of Staff</p>
+  </div>
+  <div class="principal-select">
+    <span class="principal-label">Principal</span>
+    <button class="p-btn" id="btn-bishop" onclick="setPrincipal('bishop')">Bishop</button>
+    <button class="p-btn active" id="btn-calvin" onclick="setPrincipal('calvin')">Calvin</button>
+  </div>
+</header>
+
+<div class="chat-wrap" id="chat-wrap">
+  <div class="chat-inner" id="chat">
+    <div class="empty-state" id="empty">Select principal — Linda is standing by</div>
+  </div>
+</div>
+
+<div class="status-row" id="status"></div>
+
+<div class="input-area">
+  <div class="input-inner">
+    <button class="brief-btn" id="brief-btn" onclick="requestBrief()" title="Morning brief">Brief</button>
+    <textarea
+      id="input"
+      placeholder="Speak to Linda..."
+      rows="1"
+      onkeydown="handleKey(event)"
+      oninput="autoResize(this)"
+    ></textarea>
+    <button class="send-btn" id="send-btn" onclick="sendMessage()">Send</button>
+  </div>
+</div>
+
+<script>
+  let principal = 'calvin';
+  let principalId = null;
+  let conversationHistory = [];
+
+  async function init() {
+    try {
+      const r = await fetch('/linda/health');
+      const d = await r.json();
+      if (d.status) setStatus('Operational');
+    } catch {
+      setStatus('Server offline — run npm start');
+    }
+  }
+
+  function setPrincipal(p) {
+    principal = p;
+    principalId = null;
+    conversationHistory = [];
+
+    document.getElementById('btn-bishop').classList.toggle('active', p === 'bishop');
+    document.getElementById('btn-calvin').classList.toggle('active', p === 'calvin');
+
+    document.getElementById('chat').innerHTML = '<div class="empty-state" id="empty">Linda is ready</div>';
+    setStatus('');
+    document.getElementById('input').focus();
+  }
+
+  async function sendMessage() {
+    const input = document.getElementById('input');
+    const message = input.value.trim();
+    if (!message) return;
+
+    const btn = document.getElementById('send-btn');
+    btn.disabled = true;
+    input.value = '';
+    autoResize(input);
+
+    removeEmpty();
+    appendMessage('user', message, principal === 'bishop' ? 'Bishop' : 'Calvin');
+    setStatus('...');
+
+    try {
+      const body = { message, conversation_history: conversationHistory };
+      if (principalId) body.principal_id = principalId;
+
+      const r = await fetch('/linda/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await r.json();
+      if (data.error) throw new Error(data.error);
+
+      conversationHistory.push(
+        { role: 'user', content: message },
+        { role: 'assistant', content: data.response }
+      );
+
+      appendMessage('linda', data.response, 'Linda');
+      setStatus('');
+    } catch (e) {
+      setStatus('Error — ' + e.message);
+    }
+
+    btn.disabled = false;
+    input.focus();
+  }
+
+  async function requestBrief() {
+    if (!principalId) {
+      setStatus('Set principal UUID in .env to use briefs');
+      return;
+    }
+
+    const btn = document.getElementById('brief-btn');
+    btn.disabled = true;
+    setStatus('Generating brief...');
+
+    try {
+      const r = await fetch(`/linda/brief/${principalId}`, { method: 'POST' });
+      const data = await r.json();
+      if (data.error) throw new Error(data.error);
+      removeEmpty();
+      appendMessage('linda', data.brief, 'Morning Brief');
+      setStatus('');
+    } catch (e) {
+      setStatus('Error — ' + e.message);
+    }
+
+    btn.disabled = false;
+  }
+
+  function appendMessage(type, text, label) {
+    const chat = document.getElementById('chat');
+    const div = document.createElement('div');
+    div.className = `message ${type}`;
+    div.innerHTML = `
+      <div class="msg-label">${label}</div>
+      <div class="msg-text">${escapeHtml(text).replace(/\n/g, '<br>')}</div>
+    `;
+    chat.appendChild(div);
+    document.getElementById('chat-wrap').scrollTop = 99999;
+  }
+
+  function escapeHtml(str) {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function removeEmpty() {
+    const e = document.getElementById('empty');
+    if (e) e.remove();
+  }
+
+  function setStatus(text) {
+    document.getElementById('status').textContent = text;
+  }
+
+  function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  }
+
+  function autoResize(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 130) + 'px';
+  }
+
+  init();
+</script>
+
+</body>
+</html>
