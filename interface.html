@@ -293,7 +293,7 @@
     }
   }
 
-  function setPrincipal(p) {
+  async function setPrincipal(p) {
     principal = p;
     principalId = p === 'bishop' ? BISHOP_UUID : CALVIN_UUID;
     conversationHistory = [];
