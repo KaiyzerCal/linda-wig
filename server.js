@@ -4,11 +4,19 @@ const cors = require('cors');
 const Anthropic = require('@anthropic-ai/sdk');
 const { createClient } = require('@supabase/supabase-js');
 const path = require('path');
+const fs = require('fs');
+const Stripe = require('stripe');
 
 const app = express();
 app.use(cors());
+
+// Raw body needed for Stripe webhook signature verification — must come before express.json()
+app.use('/pantheon/webhook', express.raw({ type: 'application/json' }));
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
+
+const stripe = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const supabase = createClient(
@@ -622,6 +630,163 @@ app.post('/linda/zapier/webhook', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ─── PANTHEON ────────────────────────────────────────────────────────────────
+
+// Serve pantheon.html with env vars injected for Supabase client
+app.get('/pantheon', (req, res) => {
+  try {
+    let html = fs.readFileSync(path.join(__dirname, 'pantheon.html'), 'utf8');
+    html = html
+      .replace('%%SUPABASE_URL%%', process.env.SUPABASE_URL || '')
+      .replace('%%SUPABASE_ANON_KEY%%', process.env.SUPABASE_ANON_KEY || '');
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (err) {
+    res.status(500).send('Pantheon unavailable');
+  }
+});
+
+app.get('/pantheon/health', (req, res) => {
+  res.json({ status: 'Pantheon is operational', timestamp: new Date().toISOString() });
+});
+
+// Feed — public, joined with persona data
+app.get('/pantheon/feed', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('pantheon_feed_items')
+      .select('*, pantheon_personas(name, seat)')
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Subscribe — create Stripe checkout session
+app.post('/pantheon/subscribe', async (req, res) => {
+  if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
+  try {
+    const { email, plan } = req.body;
+    if (!email || !plan) return res.status(400).json({ error: 'email and plan required' });
+
+    const priceId = plan === 'monthly'
+      ? process.env.STRIPE_MONTHLY_PRICE_ID
+      : process.env.STRIPE_DAILY_PRICE_ID;
+
+    if (!priceId) return res.status(503).json({ error: 'Price not configured for plan: ' + plan });
+
+    const origin = req.headers.origin || `${req.protocol}://${req.headers.host}`;
+    const session = await stripe.checkout.sessions.create({
+      mode: plan === 'monthly' ? 'subscription' : 'payment',
+      customer_email: email,
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: `${origin}/pantheon?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}/pantheon`,
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error('[Pantheon subscribe error]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Stripe webhook — handle checkout.session.completed and subscription events
+app.post('/pantheon/webhook', async (req, res) => {
+  if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
+  const sig = req.headers['stripe-signature'];
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error('[Stripe webhook signature error]', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  try {
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object;
+      const email = session.customer_email || session.customer_details?.email;
+      if (!email) return res.json({ received: true });
+
+      let accessUntil;
+      if (session.mode === 'subscription') {
+        // Monthly — 31-day rolling access, renewed by invoice events
+        accessUntil = new Date(Date.now() + 31 * 24 * 60 * 60 * 1000).toISOString();
+      } else {
+        // One-time daily access
+        accessUntil = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      }
+
+      await supabase.from('pantheon_subscribers').upsert(
+        [{
+          email,
+          stripe_customer_id: session.customer,
+          stripe_subscription_id: session.subscription || null,
+          plan: session.mode === 'subscription' ? 'monthly' : 'daily',
+          access_until: accessUntil,
+        }],
+        { onConflict: 'email' }
+      );
+    } else if (event.type === 'invoice.payment_succeeded') {
+      const invoice = event.data.object;
+      if (invoice.subscription && invoice.customer_email) {
+        const accessUntil = new Date(Date.now() + 31 * 24 * 60 * 60 * 1000).toISOString();
+        await supabase.from('pantheon_subscribers')
+          .update({ access_until: accessUntil })
+          .eq('email', invoice.customer_email);
+      }
+    } else if (event.type === 'customer.subscription.deleted') {
+      const sub = event.data.object;
+      await supabase.from('pantheon_subscribers')
+        .update({ access_until: new Date().toISOString() })
+        .eq('stripe_subscription_id', sub.id);
+    }
+  } catch (err) {
+    console.error('[Pantheon webhook handler error]', err.message);
+  }
+
+  res.json({ received: true });
+});
+
+// Verify subscriber access
+app.get('/pantheon/verify', async (req, res) => {
+  const { email } = req.query;
+  if (!email) return res.json({ valid: false });
+  try {
+    const { data, error } = await supabase
+      .from('pantheon_subscribers')
+      .select('access_until')
+      .eq('email', email)
+      .single();
+    if (error || !data) return res.json({ valid: false });
+    const valid = data.access_until && new Date(data.access_until) > new Date();
+    res.json({ valid: !!valid });
+  } catch (err) {
+    res.json({ valid: false });
+  }
+});
+
+// Retrieve customer email from completed Stripe session
+app.get('/pantheon/session', async (req, res) => {
+  if (!stripe) return res.json({ email: null });
+  const { session_id } = req.query;
+  if (!session_id) return res.json({ email: null });
+  try {
+    const session = await stripe.checkout.sessions.retrieve(session_id);
+    const email = session.customer_email || session.customer_details?.email || null;
+    res.json({ email });
+  } catch (err) {
+    console.error('[Pantheon session error]', err.message);
+    res.json({ email: null });
+  }
+});
+
+// ─── INTERFACE ───────────────────────────────────────────────────────────────
 
 // Interface
 app.get('/', (req, res) => {
