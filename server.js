@@ -651,6 +651,105 @@ app.get('/pantheon/health', (req, res) => {
   res.json({ status: 'Pantheon is operational', timestamp: new Date().toISOString() });
 });
 
+// Manual ingest trigger — fetches RSS, generates persona responses, saves to feed
+app.post('/pantheon/trigger', async (req, res) => {
+  const RSS_FEEDS = [
+    'https://feeds.bbci.co.uk/news/world/rss.xml',
+    'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',
+    'https://feeds.reuters.com/reuters/topNews',
+  ];
+
+  function parseRssItems(xml) {
+    const items = [];
+    const matches = xml.match(/<item[\s\S]*?<\/item>/g) || [];
+    for (const item of matches.slice(0, 3)) {
+      const titleMatch = item.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/) ||
+                         item.match(/<title>([\s\S]*?)<\/title>/);
+      const linkMatch  = item.match(/<link>([\s\S]*?)<\/link>/) ||
+                         item.match(/<guid[^>]*>(https?:\/\/[^<]+)<\/guid>/);
+      const title = titleMatch?.[1]?.trim();
+      const link  = linkMatch?.[1]?.trim();
+      if (title && link) items.push({ title, link });
+    }
+    return items;
+  }
+
+  try {
+    const { data: personas, error: personaError } = await supabase
+      .from('pantheon_personas')
+      .select('id, name, system_prompt')
+      .eq('is_active', true);
+
+    if (personaError || !personas?.length) {
+      return res.status(500).json({ error: 'No active personas', detail: personaError?.message });
+    }
+
+    const { data: existing } = await supabase
+      .from('pantheon_feed_items')
+      .select('source_url')
+      .order('created_at', { ascending: false })
+      .limit(200);
+
+    const existingUrls = new Set((existing || []).map(r => r.source_url));
+    const newItems = [];
+
+    for (const feedUrl of RSS_FEEDS) {
+      try {
+        const feedRes = await fetch(feedUrl, {
+          headers: { 'User-Agent': 'PantheonFeed/1.0' },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!feedRes.ok) continue;
+        const xml = await feedRes.text();
+        for (const item of parseRssItems(xml)) {
+          if (!existingUrls.has(item.link)) {
+            newItems.push(item);
+            existingUrls.add(item.link);
+          }
+        }
+      } catch (e) {
+        console.error(`[Pantheon] Feed fetch failed: ${feedUrl}`, e.message);
+      }
+    }
+
+    if (!newItems.length) {
+      return res.json({ message: 'No new headlines', generated: 0 });
+    }
+
+    let generated = 0;
+    const errors = [];
+
+    for (const item of newItems) {
+      for (const persona of personas) {
+        try {
+          const aiRes = await anthropic.messages.create({
+            model: 'claude-sonnet-4-6',
+            max_tokens: 180,
+            system: persona.system_prompt,
+            messages: [{ role: 'user', content: `The following just entered the record: ${item.title}. Speak.` }],
+          });
+          const content = aiRes.content[0]?.type === 'text' ? aiRes.content[0].text : '';
+          const { error: insertError } = await supabase.from('pantheon_feed_items').insert([{
+            persona_id: persona.id,
+            content,
+            source_headline: item.title,
+            source_url: item.link,
+          }]);
+          if (insertError) errors.push(insertError.message);
+          else generated++;
+        } catch (e) {
+          errors.push(`${persona.name}/${item.title.slice(0, 40)}: ${e.message}`);
+        }
+      }
+    }
+
+    res.json({ message: 'Ingest complete', new_headlines: newItems.length, generated, errors });
+  } catch (err) {
+    console.error('[Pantheon trigger error]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Feed — public, joined with persona data
 app.get('/pantheon/feed', async (req, res) => {
   try {
