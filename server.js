@@ -73,10 +73,11 @@ app.post('/linda/chat', async (req, res) => {
     const reply = response.content[0].text;
 
     if (principal_id) {
-      await supabase.from('conversations').insert([
+      const { error: saveError } = await supabase.from('conversations').insert([
         { principal_id, role: 'user', content: message },
         { principal_id, role: 'assistant', content: reply }
       ]);
+      if (saveError) console.error('[Supabase save error]', saveError.message);
     }
 
     res.json({ response: reply, principal_id });
