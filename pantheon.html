@@ -125,85 +125,6 @@
       margin-bottom: 56px;
     }
 
-    /* Paywall */
-    .paywall-gate {
-      position: relative;
-      margin-top: 0;
-    }
-
-    .paywall-blur {
-      pointer-events: none;
-      user-select: none;
-      opacity: 0.12;
-      filter: blur(3px);
-    }
-
-    .paywall-card {
-      border: 1px solid #1a1a1a;
-      padding: 48px 40px;
-      text-align: center;
-      margin: 0 auto;
-      max-width: 480px;
-    }
-
-    .paywall-card p {
-      font-size: 0.88rem;
-      line-height: 1.8;
-      color: #888;
-      margin-bottom: 32px;
-      font-style: italic;
-    }
-
-    .paywall-btn {
-      display: block;
-      width: 100%;
-      padding: 13px 0;
-      background: transparent;
-      border: 1px solid #333;
-      color: #aaa;
-      font-family: inherit;
-      font-size: 0.72rem;
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-      cursor: pointer;
-      transition: all 0.15s;
-      margin-bottom: 12px;
-    }
-
-    .paywall-btn:hover {
-      border-color: #888;
-      color: var(--text);
-    }
-
-    .paywall-btn.primary {
-      border-color: #555;
-      color: var(--text);
-    }
-
-    .paywall-email {
-      width: 100%;
-      background: transparent;
-      border: none;
-      border-bottom: 1px solid #222;
-      color: var(--text);
-      font-family: inherit;
-      font-size: 0.85rem;
-      padding: 8px 0;
-      outline: none;
-      margin-bottom: 20px;
-      text-align: center;
-    }
-
-    .paywall-email::placeholder { color: #333; }
-
-    .paywall-note {
-      font-size: 0.58rem;
-      letter-spacing: 0.12em;
-      color: var(--muted);
-      text-transform: uppercase;
-      margin-top: 16px;
-    }
-
     .empty-state {
       text-align: center;
       padding: 80px 20px;
@@ -250,13 +171,11 @@
 <script>
   const SUPABASE_URL = '%%SUPABASE_URL%%';
   const SUPABASE_ANON_KEY = '%%SUPABASE_ANON_KEY%%';
-  const FREE_ITEM_LIMIT = 3;
 
   const PERSONA_COLORS = { Fen: 'fen', Kael: 'kael', Maren: 'maren' };
 
   let allItems = [];
   let personas = {};
-  let isSubscribed = false;
 
   async function supabaseFetch(path, opts = {}) {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
@@ -270,16 +189,6 @@
     });
     if (!res.ok) throw new Error(`Supabase error: ${res.status}`);
     return res.json();
-  }
-
-  async function checkSubscription() {
-    const email = localStorage.getItem('pantheon_email');
-    if (!email) return false;
-    try {
-      const res = await fetch(`/pantheon/verify?email=${encodeURIComponent(email)}`);
-      const data = await res.json();
-      return data.valid === true;
-    } catch { return false; }
   }
 
   async function loadPersonas() {
@@ -307,10 +216,8 @@
 
     feed.innerHTML = '';
 
-    const visibleItems = isSubscribed ? allItems : allItems.slice(0, FREE_ITEM_LIMIT);
-
-    for (let i = 0; i < visibleItems.length; i++) {
-      const item = visibleItems[i];
+    for (let i = 0; i < allItems.length; i++) {
+      const item = allItems[i];
       const persona = personas[item.persona_id];
       const personaName = persona?.name || 'Unknown';
       const personaClass = PERSONA_COLORS[personaName] || 'fen';
@@ -327,57 +234,11 @@
       `;
       feed.appendChild(el);
 
-      if (i < visibleItems.length - 1) {
+      if (i < allItems.length - 1) {
         const hr = document.createElement('hr');
         hr.className = 'divider';
         feed.appendChild(hr);
       }
-    }
-
-    if (!isSubscribed && allItems.length > FREE_ITEM_LIMIT) {
-      renderPaywall(feed);
-    }
-  }
-
-  function renderPaywall(feed) {
-    const gate = document.createElement('div');
-    gate.className = 'paywall-gate';
-    gate.id = 'paywall';
-    gate.innerHTML = `
-      <div class="paywall-card">
-        <p>"$1 for 24 hours. $19.97 per month.<br>We charge once. We owe you everything we see."</p>
-        <input type="email" class="paywall-email" id="paywall-email" placeholder="your@email.com">
-        <button class="paywall-btn primary" onclick="startCheckout('monthly')">$19.97 / month — Full access</button>
-        <button class="paywall-btn" onclick="startCheckout('daily')">$1 — 24-hour access</button>
-        <div class="paywall-note" id="paywall-status"></div>
-      </div>
-    `;
-    feed.appendChild(gate);
-  }
-
-  async function startCheckout(plan) {
-    const emailEl = document.getElementById('paywall-email');
-    const email = emailEl?.value?.trim();
-    if (!email || !email.includes('@')) {
-      document.getElementById('paywall-status').textContent = 'Enter your email first.';
-      return;
-    }
-    document.getElementById('paywall-status').textContent = 'Redirecting...';
-    try {
-      const res = await fetch('/pantheon/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, plan })
-      });
-      const data = await res.json();
-      if (data.url) {
-        localStorage.setItem('pantheon_email', email);
-        window.location.href = data.url;
-      } else {
-        document.getElementById('paywall-status').textContent = data.error || 'Something went wrong.';
-      }
-    } catch (e) {
-      document.getElementById('paywall-status').textContent = 'Error — try again.';
     }
   }
 
@@ -452,21 +313,6 @@
   }
 
   async function init() {
-    // Check for post-Stripe redirect
-    const params = new URLSearchParams(window.location.search);
-    const sessionId = params.get('session_id');
-    if (sessionId) {
-      document.getElementById('live-label').textContent = 'Verifying access...';
-      try {
-        const res = await fetch(`/pantheon/session?session_id=${sessionId}`);
-        const data = await res.json();
-        if (data.email) localStorage.setItem('pantheon_email', data.email);
-      } catch {}
-      window.history.replaceState({}, '', '/pantheon');
-    }
-
-    isSubscribed = await checkSubscription();
-
     await loadPersonas();
     await loadFeed();
 
