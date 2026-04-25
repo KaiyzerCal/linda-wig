@@ -256,11 +256,15 @@
 </div>
 
 <script>
+  const BISHOP_UUID = '733cd866-bbe5-4957-9a83-3a3dba4bc011';
+  const CALVIN_UUID = '5f7d2ce4-de80-4fb8-bbdd-d4190f967b46';
+
   let principal = 'calvin';
-  let principalId = null;
+  let principalId = CALVIN_UUID;
   let conversationHistory = [];
 
   async function init() {
+    principalId = CALVIN_UUID;
     try {
       const r = await fetch('/linda/health');
       const d = await r.json();
@@ -272,7 +276,7 @@
 
   function setPrincipal(p) {
     principal = p;
-    principalId = null;
+    principalId = p === 'bishop' ? BISHOP_UUID : CALVIN_UUID;
     conversationHistory = [];
 
     document.getElementById('btn-bishop').classList.toggle('active', p === 'bishop');
