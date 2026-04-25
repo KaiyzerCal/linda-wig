@@ -272,6 +272,25 @@
     } catch {
       setStatus('Server offline — run npm start');
     }
+    await loadHistory();
+  }
+
+  async function loadHistory() {
+    if (!principalId) return;
+    try {
+      const r = await fetch(`/linda/conversations/${principalId}`);
+      const history = await r.json();
+      if (history.length) {
+        removeEmpty();
+        history.forEach(msg => {
+          const label = msg.role === 'assistant' ? 'Linda' : (principal === 'bishop' ? 'Bishop' : 'Calvin');
+          appendMessage(msg.role === 'assistant' ? 'linda' : 'user', msg.content, label);
+        });
+        conversationHistory = history.map(h => ({ role: h.role, content: h.content }));
+      }
+    } catch (e) {
+      console.error('Failed to load history', e);
+    }
   }
 
   function setPrincipal(p) {
@@ -285,6 +304,7 @@
     document.getElementById('chat').innerHTML = '<div class="empty-state" id="empty">Linda is ready</div>';
     setStatus('');
     document.getElementById('input').focus();
+    await loadHistory();
   }
 
   async function sendMessage() {

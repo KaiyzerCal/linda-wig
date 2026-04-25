@@ -174,6 +174,22 @@ Open with a statement about what matters most today. Under 120 words. Pure signa
   }
 });
 
+// Conversations — load history for display
+app.get('/linda/conversations/:principal_id', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('conversations')
+      .select('role, content, created_at')
+      .eq('principal_id', req.params.principal_id)
+      .order('created_at', { ascending: true })
+      .limit(50);
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Technical queue — get
 app.get('/linda/technical-queue', async (req, res) => {
   try {
