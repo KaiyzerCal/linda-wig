@@ -3,8 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Linda — WIG</title>
+  <title>WIG — Linda & Locke</title>
   <style>
+    :root {
+      --accent: #c4b08a;
+      --accent-bg: rgba(196, 176, 138, 0.04);
+    }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
@@ -24,13 +29,15 @@
       justify-content: space-between;
       align-items: center;
       flex-shrink: 0;
+      gap: 20px;
     }
 
     .brand h1 {
       font-size: 1rem;
       font-weight: normal;
       letter-spacing: 0.2em;
-      color: #c4b08a;
+      color: var(--accent);
+      transition: color 0.3s;
     }
 
     .brand p {
@@ -39,20 +46,27 @@
       color: #444;
       text-transform: uppercase;
       margin-top: 3px;
+      transition: color 0.3s;
     }
 
-    .principal-select {
+    .header-right {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .toggle-group {
       display: flex;
       gap: 6px;
       align-items: center;
     }
 
-    .principal-label {
-      font-size: 0.65rem;
+    .toggle-label {
+      font-size: 0.62rem;
       letter-spacing: 0.2em;
-      color: #3a3a3a;
+      color: #333;
       text-transform: uppercase;
-      margin-right: 6px;
+      margin-right: 4px;
     }
 
     .p-btn {
@@ -68,14 +82,20 @@
     }
 
     .p-btn.active {
-      border-color: #c4b08a;
-      color: #c4b08a;
-      background: rgba(196, 176, 138, 0.04);
+      border-color: var(--accent);
+      color: var(--accent);
+      background: var(--accent-bg);
     }
 
     .p-btn:hover:not(.active) {
       border-color: #333;
       color: #777;
+    }
+
+    .divider {
+      width: 1px;
+      height: 20px;
+      background: #1e1e1e;
     }
 
     .chat-wrap {
@@ -102,7 +122,7 @@
       color: #333;
     }
 
-    .message.linda .msg-label { color: #c4b08a; }
+    .message.agent .msg-label { color: var(--accent); }
 
     .msg-text {
       font-size: 0.93rem;
@@ -186,8 +206,8 @@
     }
 
     .send-btn:hover:not(:disabled) {
-      border-color: #c4b08a;
-      color: #c4b08a;
+      border-color: var(--accent);
+      color: var(--accent);
     }
 
     .send-btn:disabled { opacity: 0.2; cursor: not-allowed; }
@@ -213,9 +233,10 @@
     ::-webkit-scrollbar-thumb { background: #1e1e1e; }
 
     @media (max-width: 600px) {
-      header { padding: 14px 20px; }
+      header { padding: 14px 20px; flex-wrap: wrap; }
       .chat-inner, .input-inner, .status-row { padding-left: 20px; padding-right: 20px; }
-      .principal-label { display: none; }
+      .toggle-label { display: none; }
+      .divider { display: none; }
     }
   </style>
 </head>
@@ -223,19 +244,27 @@
 
 <header>
   <div class="brand">
-    <h1>LINDA</h1>
-    <p>WIG Chief of Staff</p>
+    <h1 id="agent-name">LINDA</h1>
+    <p id="agent-role">WIG Chief of Staff</p>
   </div>
-  <div class="principal-select">
-    <span class="principal-label">Principal</span>
-    <button class="p-btn" id="btn-bishop" onclick="setPrincipal('bishop')">Bishop</button>
-    <button class="p-btn active" id="btn-calvin" onclick="setPrincipal('calvin')">Calvin</button>
+  <div class="header-right">
+    <div class="toggle-group">
+      <span class="toggle-label">Agent</span>
+      <button class="p-btn active" id="btn-linda" onclick="setAgent('linda')">Linda</button>
+      <button class="p-btn" id="btn-locke" onclick="setAgent('locke')">Locke</button>
+    </div>
+    <div class="divider"></div>
+    <div class="toggle-group">
+      <span class="toggle-label">Principal</span>
+      <button class="p-btn" id="btn-bishop" onclick="setPrincipal('bishop')">Bishop</button>
+      <button class="p-btn active" id="btn-calvin" onclick="setPrincipal('calvin')">Calvin</button>
+    </div>
   </div>
 </header>
 
 <div class="chat-wrap" id="chat-wrap">
   <div class="chat-inner" id="chat">
-    <div class="empty-state" id="empty">Select principal — Linda is standing by</div>
+    <div class="empty-state" id="empty">Linda is standing by</div>
   </div>
 </div>
 
@@ -259,6 +288,12 @@
   const BISHOP_UUID = '733cd866-bbe5-4957-9a83-3a3dba4bc011';
   const CALVIN_UUID = '5f7d2ce4-de80-4fb8-bbdd-d4190f967b46';
 
+  const AGENTS = {
+    linda: { name: 'LINDA', role: 'WIG Chief of Staff', accent: '#c4b08a', accentBg: 'rgba(196, 176, 138, 0.04)', placeholder: 'Speak to Linda...' },
+    locke: { name: 'LOCKE', role: 'Skyforge Forgemaster', accent: '#8a9ab0', accentBg: 'rgba(138, 154, 176, 0.04)', placeholder: 'Speak to Locke...' }
+  };
+
+  let agent = 'linda';
   let principal = 'calvin';
   let principalId = CALVIN_UUID;
   let conversationHistory = [];
@@ -275,16 +310,37 @@
     await loadHistory();
   }
 
+  async function setAgent(a) {
+    agent = a;
+    conversationHistory = [];
+    const cfg = AGENTS[a];
+
+    document.documentElement.style.setProperty('--accent', cfg.accent);
+    document.documentElement.style.setProperty('--accent-bg', cfg.accentBg);
+    document.getElementById('agent-name').textContent = cfg.name;
+    document.getElementById('agent-role').textContent = cfg.role;
+    document.getElementById('input').placeholder = cfg.placeholder;
+    document.getElementById('btn-linda').classList.toggle('active', a === 'linda');
+    document.getElementById('btn-locke').classList.toggle('active', a === 'locke');
+
+    document.getElementById('chat').innerHTML = `<div class="empty-state" id="empty">${cfg.name.charAt(0) + cfg.name.slice(1).toLowerCase()} is ready</div>`;
+    setStatus('');
+    document.getElementById('input').focus();
+    await loadHistory();
+  }
+
   async function loadHistory() {
     if (!principalId) return;
+    const endpoint = agent === 'locke' ? `/locke/conversations/${principalId}` : `/linda/conversations/${principalId}`;
     try {
-      const r = await fetch(`/linda/conversations/${principalId}`);
+      const r = await fetch(endpoint);
       const history = await r.json();
       if (history.length) {
         removeEmpty();
+        const agentLabel = agent === 'locke' ? 'Locke' : 'Linda';
         history.forEach(msg => {
-          const label = msg.role === 'assistant' ? 'Linda' : (principal === 'bishop' ? 'Bishop' : 'Calvin');
-          appendMessage(msg.role === 'assistant' ? 'linda' : 'user', msg.content, label);
+          const label = msg.role === 'assistant' ? agentLabel : (principal === 'bishop' ? 'Bishop' : 'Calvin');
+          appendMessage(msg.role === 'assistant' ? 'agent' : 'user', msg.content, label);
         });
         conversationHistory = history.map(h => ({ role: h.role, content: h.content }));
       }
@@ -301,7 +357,8 @@
     document.getElementById('btn-bishop').classList.toggle('active', p === 'bishop');
     document.getElementById('btn-calvin').classList.toggle('active', p === 'calvin');
 
-    document.getElementById('chat').innerHTML = '<div class="empty-state" id="empty">Linda is ready</div>';
+    const agentLabel = agent === 'locke' ? 'Locke' : 'Linda';
+    document.getElementById('chat').innerHTML = `<div class="empty-state" id="empty">${agentLabel} is ready</div>`;
     setStatus('');
     document.getElementById('input').focus();
     await loadHistory();
@@ -321,11 +378,14 @@
     appendMessage('user', message, principal === 'bishop' ? 'Bishop' : 'Calvin');
     setStatus('...');
 
+    const chatEndpoint = agent === 'locke' ? '/locke/chat' : '/linda/chat';
+    const agentLabel = agent === 'locke' ? 'Locke' : 'Linda';
+
     try {
       const body = { message, conversation_history: conversationHistory };
       if (principalId) body.principal_id = principalId;
 
-      const r = await fetch('/linda/chat', {
+      const r = await fetch(chatEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -338,7 +398,7 @@
         { role: 'assistant', content: data.response }
       );
 
-      appendMessage('linda', data.response, 'Linda');
+      appendMessage('agent', data.response, agentLabel);
       setStatus('');
     } catch (e) {
       setStatus('Error — ' + e.message);
@@ -349,10 +409,8 @@
   }
 
   async function requestBrief() {
-    if (!principalId) {
-      setStatus('Set principal UUID in .env to use briefs');
-      return;
-    }
+    if (agent === 'locke') { setStatus('Briefs are Linda only'); return; }
+    if (!principalId) { setStatus('Principal UUID required'); return; }
 
     const btn = document.getElementById('brief-btn');
     btn.disabled = true;
@@ -363,7 +421,7 @@
       const data = await r.json();
       if (data.error) throw new Error(data.error);
       removeEmpty();
-      appendMessage('linda', data.brief, 'Morning Brief');
+      appendMessage('agent', data.brief, 'Morning Brief');
       setStatus('');
     } catch (e) {
       setStatus('Error — ' + e.message);

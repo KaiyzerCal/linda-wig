@@ -74,6 +74,15 @@ CREATE TABLE IF NOT EXISTS agent_reports (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Locke conversation history
+CREATE TABLE IF NOT EXISTS locke_conversations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  principal_id UUID REFERENCES principals(id),
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Disable RLS on all Linda tables (service_role key is used server-side)
 ALTER TABLE principals DISABLE ROW LEVEL SECURITY;
 ALTER TABLE missions DISABLE ROW LEVEL SECURITY;
@@ -82,6 +91,7 @@ ALTER TABLE conversations DISABLE ROW LEVEL SECURITY;
 ALTER TABLE lineage DISABLE ROW LEVEL SECURITY;
 ALTER TABLE book_ops DISABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_reports DISABLE ROW LEVEL SECURITY;
+ALTER TABLE locke_conversations DISABLE ROW LEVEL SECURITY;
 
 -- After running, grab UUIDs for .env:
 -- SELECT id, name, role FROM principals;
