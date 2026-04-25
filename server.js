@@ -194,6 +194,75 @@ You are Locke. The Forgemaster. The left hand. Build something that lasts.`;
 
 // Linda health
 
+async function buildCrossContext(principal_id, currentAgent) {
+  if (!principal_id) return null;
+
+  const otherTable = currentAgent === 'linda' ? 'locke_conversations' : 'conversations';
+  const otherName  = currentAgent === 'linda' ? 'Locke' : 'Linda';
+
+  const [
+    { data: otherHistory },
+    { data: missions },
+    { data: queue },
+    { data: lineage },
+    { data: bookOps }
+  ] = await Promise.all([
+    supabase.from(otherTable)
+      .select('role, content, created_at')
+      .eq('principal_id', principal_id)
+      .order('created_at', { ascending: false })
+      .limit(20),
+    supabase.from('missions')
+      .select('title, description, status, priority')
+      .order('created_at', { ascending: false })
+      .limit(20),
+    supabase.from('technical_queue')
+      .select('title, description, status, calvin_notes')
+      .order('created_at', { ascending: false })
+      .limit(20),
+    supabase.from('lineage')
+      .select('title, content, category')
+      .order('created_at', { ascending: false })
+      .limit(10),
+    supabase.from('book_ops')
+      .select('operation, details, status')
+      .order('created_at', { ascending: false })
+      .limit(10)
+  ]);
+
+  const sections = [];
+
+  sections.push(`LIVE OPERATIONAL CONTEXT — ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`);
+
+  if (missions?.length) {
+    sections.push(`\nACTIVE MISSIONS (${missions.length}):\n` +
+      missions.map(m => `[${m.status.toUpperCase()} / ${m.priority}] ${m.title}${m.description ? ' — ' + m.description : ''}`).join('\n'));
+  }
+
+  if (queue?.length) {
+    sections.push(`\nTECHNICAL QUEUE (${queue.length}):\n` +
+      queue.map(q => `[${q.status.toUpperCase()}] ${q.title}${q.calvin_notes ? ' — Notes: ' + q.calvin_notes : ''}`).join('\n'));
+  }
+
+  if (bookOps?.length) {
+    sections.push(`\nBOOK OPERATIONS LOG (recent ${bookOps.length}):\n` +
+      bookOps.map(b => `[${b.status}] ${b.operation}${b.details ? ' — ' + JSON.stringify(b.details).slice(0, 100) : ''}`).join('\n'));
+  }
+
+  if (lineage?.length) {
+    sections.push(`\nFAMILY LINEAGE ARCHIVE (${lineage.length} entries):\n` +
+      lineage.map(l => `[${l.category || 'general'}] ${l.title}: ${l.content.slice(0, 200)}`).join('\n'));
+  }
+
+  if (otherHistory?.length) {
+    const chronological = [...otherHistory].reverse();
+    sections.push(`\n${otherName.toUpperCase()}'S MEMORY WITH THIS PRINCIPAL (most recent ${chronological.length} exchanges):\n` +
+      chronological.map(h => `[${h.role === 'user' ? 'Principal' : otherName}]: ${h.content.slice(0, 300)}`).join('\n'));
+  }
+
+  return sections.join('\n');
+}
+
 app.get('/linda/health', (req, res) => {
   res.json({
     status: 'Linda is operational',
@@ -224,10 +293,14 @@ app.post('/linda/chat', async (req, res) => {
       { role: 'user', content: message }
     ];
 
+    const crossContext = await buildCrossContext(principal_id, 'linda');
+    const system = [{ type: 'text', text: LINDA_SYSTEM, cache_control: { type: 'ephemeral' } }];
+    if (crossContext) system.push({ type: 'text', text: crossContext });
+
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
-      system: [{ type: 'text', text: LINDA_SYSTEM, cache_control: { type: 'ephemeral' } }],
+      system,
       messages
     });
 
@@ -380,10 +453,14 @@ app.post('/locke/chat', async (req, res) => {
       { role: 'user', content: message }
     ];
 
+    const crossContext = await buildCrossContext(principal_id, 'locke');
+    const system = [{ type: 'text', text: LOCKE_SYSTEM, cache_control: { type: 'ephemeral' } }];
+    if (crossContext) system.push({ type: 'text', text: crossContext });
+
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 8096,
-      system: [{ type: 'text', text: LOCKE_SYSTEM, cache_control: { type: 'ephemeral' } }],
+      system,
       messages
     });
 
