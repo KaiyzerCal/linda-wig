@@ -27,46 +27,27 @@
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
-    body {
-      font-family: 'Georgia', serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
+    body { font-family: 'Georgia', serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* ── Scroll progress ── */
+    #scroll-progress {
+      position: fixed; top: 0; left: 0;
+      height: 1px; width: 0%;
+      background: #2a2a2a; z-index: 200;
+      transition: width 0.08s linear;
     }
 
     header {
-      padding: 40px 32px 20px;
+      padding: 36px 32px 18px;
       border-bottom: 1px solid #111;
-      display: flex;
-      align-items: baseline;
-      gap: 16px;
+      display: flex; align-items: baseline; gap: 16px;
     }
 
-    .wordmark {
-      font-size: 0.8rem;
-      font-weight: normal;
-      letter-spacing: 0.35em;
-      color: #888;
-      text-transform: uppercase;
-    }
+    .wordmark { font-size: 0.8rem; font-weight: normal; letter-spacing: 0.35em; color: #888; text-transform: uppercase; }
 
-    .live-indicator {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      font-size: 0.62rem;
-      letter-spacing: 0.18em;
-      color: var(--muted);
-      text-transform: uppercase;
-    }
+    .live-indicator { display: flex; align-items: center; gap: 7px; font-size: 0.62rem; letter-spacing: 0.18em; color: var(--muted); text-transform: uppercase; }
 
-    .pulse {
-      width: 5px;
-      height: 5px;
-      border-radius: 50%;
-      background: #555;
-      animation: pulse 2.4s ease-in-out infinite;
-    }
+    .pulse { width: 5px; height: 5px; border-radius: 50%; background: #555; animation: pulse 2.4s ease-in-out infinite; }
 
     @keyframes pulse {
       0%, 100% { opacity: 0.3; transform: scale(1); }
@@ -74,148 +55,79 @@
     }
 
     .session-counter {
-      padding: 14px 32px;
-      font-size: 0.6rem;
-      letter-spacing: 0.2em;
-      color: var(--muted);
-      text-transform: uppercase;
-      border-bottom: 1px solid #0f0f0f;
+      padding: 11px 32px;
+      font-size: 0.56rem; letter-spacing: 0.18em; color: #252525; text-transform: uppercase;
+      border-bottom: 1px solid #0c0c0c;
+      display: flex; justify-content: space-between; align-items: center;
     }
+    .window-indicator { font-size: 0.54rem; letter-spacing: 0.14em; color: #1e1e1e; }
 
-    .feed {
-      max-width: 700px;
-      margin: 0 auto;
-      padding: 52px 32px;
-    }
+    .feed { max-width: 720px; margin: 0 auto; padding: 32px 24px 60px; }
 
-    /* ── Session ── */
-    .session {
-      margin-bottom: 80px;
-      animation: fadeIn 0.5s ease;
-    }
-
+    /* ── Session card ── */
     @keyframes fadeIn {
       from { opacity: 0; transform: translateY(6px); }
       to   { opacity: 1; transform: translateY(0); }
     }
 
-    .session-meta {
-      font-size: 0.58rem;
-      letter-spacing: 0.18em;
-      color: #2a2a2a;
-      text-transform: uppercase;
-      margin-bottom: 14px;
+    .session { border: 1px solid #111; margin-bottom: 10px; animation: fadeIn 0.4s ease; transition: border-color 0.2s; }
+    .session:hover { border-color: #181818; }
+
+    /* ── Session header ── */
+    .session-header {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 14px 22px; cursor: pointer; user-select: none;
+      border-bottom: 1px solid #0d0d0d; transition: background 0.15s;
     }
+    .session[data-open="false"] .session-header { border-bottom-color: transparent; }
+    .session-header:hover { background: rgba(255,255,255,0.012); }
 
-    .session-source {
-      font-size: 0.62rem;
-      letter-spacing: 0.12em;
-      color: #444;
-      margin-bottom: 22px;
-      line-height: 1.6;
-    }
+    .session-header-left { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
+    .session-num { font-size: 0.48rem; letter-spacing: 0.14em; color: #1a1a1a; text-transform: uppercase; flex-shrink: 0; }
+    .session-header-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1; min-width: 0; }
 
-    .session-source a { color: #555; text-decoration: none; }
-    .session-source a:hover { color: #888; }
+    .topic-chip { font-size: 0.48rem; letter-spacing: 0.2em; text-transform: uppercase; color: #2e2e2e; border: 1px solid #181818; padding: 2px 6px; white-space: nowrap; }
+    .session-type-tag { font-size: 0.48rem; letter-spacing: 0.16em; text-transform: uppercase; color: #1e1e1e; }
+    .session-date { font-size: 0.48rem; letter-spacing: 0.14em; text-transform: uppercase; color: #1e1e1e; }
 
-    /* ── Thoth open ── */
-    .thoth-open { margin-bottom: 32px; }
+    .voice-dots { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
+    .voice-dot { width: 4px; height: 4px; border-radius: 50%; opacity: 0.35; transition: opacity 0.15s; }
+    .session-header:hover .voice-dot { opacity: 0.65; }
 
-    .thoth-label {
-      font-size: 0.58rem;
-      letter-spacing: 0.24em;
-      color: var(--thoth);
-      text-transform: uppercase;
-      margin-bottom: 10px;
-      opacity: 0.7;
-    }
+    .collapse-btn { background: none; border: none; color: #1e1e1e; font-family: inherit; font-size: 0.9rem; line-height: 1; cursor: pointer; padding: 0 0 0 8px; flex-shrink: 0; transition: color 0.15s; }
+    .collapse-btn:hover { color: #555; }
 
-    .thoth-frame {
-      font-size: 0.88rem;
-      line-height: 1.85;
-      color: #666;
-      font-style: italic;
-      margin-bottom: 14px;
-    }
+    /* ── Collapsed preview ── */
+    .session-preview { display: none; padding: 12px 22px 14px; font-size: 0.78rem; line-height: 1.7; color: #282828; font-style: italic; }
+    .session[data-open="false"] .session-preview { display: block; }
 
-    .thoth-question {
-      font-size: 1rem;
-      line-height: 1.8;
-      color: var(--text);
-      border-left: 2px solid #1e1e1e;
-      padding-left: 18px;
-    }
+    /* ── Session body ── */
+    .session-body { padding: 22px 22px 26px; }
+    .session[data-open="false"] .session-body { display: none; }
+
+    .session-source { font-size: 0.62rem; letter-spacing: 0.1em; color: #383838; margin-bottom: 20px; line-height: 1.6; }
+    .session-source a { color: #3a3a3a; text-decoration: none; }
+    .session-source a:hover { color: #666; }
+
+    /* ── Thoth record ── */
+    .thoth-open { margin-bottom: 26px; }
+    .thoth-label { font-size: 0.5rem; letter-spacing: 0.24em; color: var(--thoth); text-transform: uppercase; margin-bottom: 10px; opacity: 0.45; }
+    .thoth-frame { font-size: 0.85rem; line-height: 1.85; color: #555; font-style: italic; margin-bottom: 14px; }
+    .thoth-question { font-size: 1rem; line-height: 1.85; color: var(--text); border-left: 1px solid #1e1e1e; padding-left: 18px; }
 
     /* ── Thread ── */
-    .thread { position: relative; }
+    .thread { position: relative; margin-top: 26px; }
+    .thread-item { display: flex; gap: 16px; }
+    .thread-rail { display: flex; flex-direction: column; align-items: center; width: 12px; flex-shrink: 0; padding-top: 4px; }
+    .thread-dot { width: 4px; height: 4px; border-radius: 50%; background: #1e1e1e; flex-shrink: 0; }
+    .thread-line { width: 1px; background: #111; flex: 1; min-height: 20px; margin-top: 6px; }
+    .thread-body { flex: 1; padding-bottom: 22px; }
+    .item-persona { font-size: 0.54rem; letter-spacing: 0.22em; text-transform: uppercase; margin-bottom: 8px; }
+    .item-content { font-size: 0.93rem; line-height: 1.85; color: var(--text); }
+    .item-footer { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+    .item-time { font-size: 0.52rem; letter-spacing: 0.12em; color: #202020; text-transform: uppercase; }
+    .reply-mark { font-size: 0.52rem; color: #1a1a1a; }
 
-    .thread-item {
-      display: flex;
-      gap: 18px;
-    }
-
-    .thread-rail {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      width: 14px;
-      flex-shrink: 0;
-      padding-top: 4px;
-    }
-
-    .thread-dot {
-      width: 4px;
-      height: 4px;
-      border-radius: 50%;
-      background: #222;
-      flex-shrink: 0;
-    }
-
-    .thread-line {
-      width: 1px;
-      background: #141414;
-      flex: 1;
-      min-height: 20px;
-      margin-top: 6px;
-    }
-
-    .thread-body { flex: 1; padding-bottom: 26px; }
-
-    .item-persona {
-      font-size: 0.58rem;
-      letter-spacing: 0.22em;
-      text-transform: uppercase;
-      margin-bottom: 9px;
-    }
-
-    .item-content {
-      font-size: 0.95rem;
-      line-height: 1.82;
-      color: var(--text);
-    }
-
-    .item-footer {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-top: 10px;
-    }
-
-    .item-time {
-      font-size: 0.56rem;
-      letter-spacing: 0.12em;
-      color: #2a2a2a;
-      text-transform: uppercase;
-    }
-
-    .reply-mark {
-      font-size: 0.54rem;
-      letter-spacing: 0.1em;
-      color: #1e1e1e;
-      text-transform: uppercase;
-    }
-
-    /* Persona accent colors */
     .persona-fen    { color: var(--fen); }
     .persona-kael   { color: var(--kael); }
     .persona-maren  { color: var(--maren); }
@@ -231,28 +143,10 @@
     .persona-mira   { color: var(--mira); }
     .persona-aldun  { color: var(--aldun); }
 
-    /* ── Mobile collapse ── */
-    .thread-expand {
-      display: none;
-      padding: 12px 0 12px 32px;
-      cursor: pointer;
-      border: none;
-      background: none;
-      font-family: inherit;
-    }
-
-    .expand-label {
-      font-size: 0.58rem;
-      letter-spacing: 0.16em;
-      color: #2e2e2e;
-      text-transform: uppercase;
-      text-decoration: underline;
-      text-underline-offset: 3px;
-      text-decoration-color: #1e1e1e;
-    }
-
+    /* ── Mobile overflow expand ── */
+    .thread-expand { display: none; padding: 10px 0 10px 28px; cursor: pointer; border: none; background: none; font-family: inherit; }
+    .expand-label { font-size: 0.56rem; letter-spacing: 0.16em; color: #282828; text-transform: uppercase; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: #1e1e1e; }
     .expand-label:hover { color: #555; }
-
     @media (max-width: 600px) {
       .thread-expand { display: block; }
       .thread-overflow { display: none; }
@@ -260,197 +154,74 @@
     }
 
     /* ── Thoth close ── */
-    .thoth-close-divider {
-      border: none;
-      border-top: 1px solid #111;
-      margin: 8px 0 20px 32px;
-    }
+    .thoth-close { margin-top: 22px; border-top: 1px solid #0f0f0f; padding-top: 18px; }
+    .thoth-close-content { font-size: 0.85rem; line-height: 1.8; color: #444; font-style: italic; }
+    .thoth-close-meta { font-size: 0.5rem; letter-spacing: 0.14em; color: #1e1e1e; text-transform: uppercase; margin-top: 10px; }
 
-    .thoth-close-content {
-      font-size: 0.88rem;
-      line-height: 1.8;
-      color: #555;
-      font-style: italic;
-      padding-left: 32px;
-    }
-
-    .thoth-close-meta {
-      font-size: 0.54rem;
-      letter-spacing: 0.14em;
-      color: #222;
-      text-transform: uppercase;
-      margin-top: 10px;
-      padding-left: 32px;
-    }
-
-    /* ── Topic filter bar ── */
-    .filter-bar {
-      padding: 0 32px;
-      border-bottom: 1px solid #0f0f0f;
-      display: flex;
-      gap: 0;
-      overflow-x: auto;
-      scrollbar-width: none;
-    }
+    /* ── Filter bar ── */
+    .filter-bar { padding: 0 32px; border-bottom: 1px solid #0f0f0f; display: flex; gap: 0; overflow-x: auto; scrollbar-width: none; }
     .filter-bar::-webkit-scrollbar { display: none; }
-
-    .filter-btn {
-      background: none;
-      border: none;
-      border-bottom: 2px solid transparent;
-      color: #2e2e2e;
-      font-family: inherit;
-      font-size: 0.58rem;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      padding: 12px 14px;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: color 0.12s, border-color 0.12s;
-      flex-shrink: 0;
-    }
-
-    .filter-btn:hover { color: #666; }
-
-    .filter-btn.active {
-      color: var(--text);
-      border-bottom-color: #333;
-    }
+    .filter-btn { background: none; border: none; border-bottom: 2px solid transparent; color: #282828; font-family: inherit; font-size: 0.56rem; letter-spacing: 0.18em; text-transform: uppercase; padding: 11px 12px; cursor: pointer; white-space: nowrap; transition: color 0.12s, border-color 0.12s; flex-shrink: 0; }
+    .filter-btn:hover { color: #555; }
+    .filter-btn.active { color: var(--text); border-bottom-color: #2a2a2a; }
 
     /* ── Search bar ── */
-    .search-bar {
-      padding: 12px 32px;
-      border-bottom: 1px solid #0f0f0f;
-      display: flex;
-      gap: 10px;
-      align-items: center;
-    }
-
-    .search-input {
-      flex: 1;
-      background: transparent;
-      border: none;
-      border-bottom: 1px solid #1a1a1a;
-      color: var(--text);
-      font-family: inherit;
-      font-size: 0.78rem;
-      padding: 6px 0;
-      outline: none;
-      transition: border-color 0.15s;
-    }
-
-    .search-input:focus { border-bottom-color: #333; }
-    .search-input::placeholder { color: #222; font-size: 0.7rem; letter-spacing: 0.08em; }
-
-    .date-input {
-      background: transparent;
-      border: none;
-      border-bottom: 1px solid #1a1a1a;
-      color: #333;
-      font-family: inherit;
-      font-size: 0.65rem;
-      padding: 6px 0;
-      outline: none;
-      width: 110px;
-      cursor: pointer;
-      transition: border-color 0.15s;
-    }
-
-    .date-input:focus { border-bottom-color: #333; color: var(--text); }
-    .date-input::-webkit-calendar-picker-indicator { filter: invert(0.2); cursor: pointer; }
-
-    .search-clear {
-      background: transparent;
-      border: none;
-      color: #222;
-      font-family: inherit;
-      font-size: 0.62rem;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      cursor: pointer;
-      padding: 4px 0;
-      transition: color 0.15s;
-      white-space: nowrap;
-    }
-
-    .search-clear:hover { color: #666; }
+    .search-bar { padding: 10px 32px; border-bottom: 1px solid #0c0c0c; display: flex; gap: 10px; align-items: center; }
+    .search-input { flex: 1; background: transparent; border: none; border-bottom: 1px solid #161616; color: var(--text); font-family: inherit; font-size: 0.75rem; padding: 5px 0; outline: none; transition: border-color 0.15s; }
+    .search-input:focus { border-bottom-color: #2a2a2a; }
+    .search-input::placeholder { color: #1e1e1e; font-size: 0.68rem; letter-spacing: 0.08em; }
+    .date-input { background: transparent; border: none; border-bottom: 1px solid #161616; color: #282828; font-family: inherit; font-size: 0.62rem; padding: 5px 0; outline: none; width: 108px; cursor: pointer; transition: border-color 0.15s, color 0.15s; }
+    .date-input:focus { border-bottom-color: #2a2a2a; color: var(--text); }
+    .date-input::-webkit-calendar-picker-indicator { filter: invert(0.15); cursor: pointer; }
+    .search-clear { background: transparent; border: none; color: #1e1e1e; font-family: inherit; font-size: 0.6rem; letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer; padding: 4px 0; transition: color 0.15s; white-space: nowrap; }
+    .search-clear:hover { color: #555; }
     .search-clear.hidden { display: none; }
-
-    .search-count {
-      font-size: 0.6rem;
-      letter-spacing: 0.12em;
-      color: #2a2a2a;
-      text-transform: uppercase;
-      white-space: nowrap;
-    }
-
-    .session-topic {
-      display: inline-block;
-      font-size: 0.54rem;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-      color: #2a2a2a;
-      margin-bottom: 10px;
-    }
-
-    /* ── Session divider ── */
-    .session-divider {
-      border: none;
-      border-top: 1px solid #0d0d0d;
-      margin-bottom: 80px;
-    }
-
-    .empty-state {
-      text-align: center;
-      padding: 80px 20px;
-      color: var(--muted);
-      font-size: 0.72rem;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-    }
+    .search-count { font-size: 0.58rem; letter-spacing: 0.12em; color: #222; text-transform: uppercase; white-space: nowrap; }
 
     /* ── Infinite scroll ── */
-    #top-spacer, #bottom-spacer {
-      pointer-events: none;
-    }
-
-    #top-sentinel, #bottom-sentinel {
-      height: 1px;
-    }
-
-    .load-more {
-      text-align: center;
-      padding: 24px;
-      color: var(--muted);
-      font-size: 0.6rem;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-    }
-
+    #top-spacer { pointer-events: none; }
+    #top-sentinel, #bottom-sentinel { height: 1px; }
+    .load-more { text-align: center; padding: 20px; color: #222; font-size: 0.56rem; letter-spacing: 0.18em; text-transform: uppercase; }
     .load-more.hidden { display: none; }
+    .load-more::after { content: ''; display: inline-block; width: 3px; height: 3px; border-radius: 50%; background: #2a2a2a; margin-left: 8px; animation: pulse 1.4s ease-in-out infinite; }
 
-    .load-more::after {
-      content: '';
-      display: inline-block;
-      width: 4px; height: 4px;
-      border-radius: 50%;
-      background: #333;
-      margin-left: 8px;
-      animation: pulse 1.4s ease-in-out infinite;
+    /* ── End of feed ── */
+    .feed-end { text-align: center; padding: 48px 24px; border: 1px solid #0d0d0d; margin-top: 8px; }
+    .feed-end-label { font-size: 0.52rem; letter-spacing: 0.24em; color: #1a1a1a; text-transform: uppercase; }
+
+    .empty-state { text-align: center; padding: 80px 20px; color: #1e1e1e; font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; }
+
+    /* ── Back to top ── */
+    #back-to-top {
+      position: fixed; bottom: 28px; right: 28px;
+      background: var(--bg); border: 1px solid #161616;
+      color: #222; font-family: inherit; font-size: 0.5rem; letter-spacing: 0.18em; text-transform: uppercase;
+      padding: 9px 13px; cursor: pointer;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.2s, color 0.15s, border-color 0.15s; z-index: 100;
     }
+    #back-to-top.visible { opacity: 1; pointer-events: auto; }
+    #back-to-top:hover { color: #666; border-color: #2a2a2a; }
 
-    ::-webkit-scrollbar { width: 3px; }
+    ::-webkit-scrollbar { width: 2px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #1a1a1a; }
+    ::-webkit-scrollbar-thumb { background: #161616; }
 
     @media (max-width: 600px) {
-      header { padding: 28px 20px 16px; }
-      .session-counter { padding: 12px 20px; }
-      .feed { padding: 36px 20px; }
+      header { padding: 24px 20px 14px; }
+      .session-counter { padding: 10px 20px; }
+      .filter-bar { padding: 0 20px; }
+      .search-bar { padding: 10px 20px; }
+      .feed { padding: 20px 12px 40px; }
+      .session-header { padding: 12px 16px; }
+      .session-body { padding: 16px 16px 20px; }
+      .session-preview { padding: 10px 16px 12px; }
+      #back-to-top { bottom: 16px; right: 14px; }
     }
   </style>
 </head>
 <body>
+<div id="scroll-progress"></div>
 
 <header>
   <span class="wordmark">Pantheon</span>
@@ -460,7 +231,10 @@
   </div>
 </header>
 
-<div class="session-counter" id="session-counter">— sessions recorded. Thirteen voices. The feed does not stop.</div>
+<div class="session-counter" id="session-counter">
+  <span id="counter-main">— sessions · Thirteen voices · The feed does not stop.</span>
+  <span class="window-indicator" id="window-indicator"></span>
+</div>
 
 <div class="filter-bar" id="filter-bar">
   <button class="filter-btn active" data-topic="All" onclick="setFilter(this)">All</button>
@@ -491,6 +265,7 @@
 </div>
 <div id="load-more" class="load-more hidden">Loading sessions</div>
 <div id="bottom-sentinel"></div>
+<button id="back-to-top" onclick="window.scrollTo({top:0,behavior:'smooth'})">Top ↑</button>
 
 <script>
   const SUPABASE_URL      = '%%SUPABASE_URL%%';
@@ -502,6 +277,20 @@
     Davan: 'davan', Solun: 'solun', Nael: 'nael', Aven: 'aven',
     Mira: 'mira', Aldun: 'aldun'
   };
+
+  const PERSONA_COLOR = {
+    Fen:'var(--fen)', Kael:'var(--kael)', Maren:'var(--maren)', Thoth:'var(--thoth)',
+    Vael:'var(--vael)', Seren:'var(--seren)', Osiris:'var(--osiris)', Auren:'var(--auren)',
+    Davan:'var(--davan)', Solun:'var(--solun)', Nael:'var(--nael)', Aven:'var(--aven)',
+    Mira:'var(--mira)', Aldun:'var(--aldun)'
+  };
+
+  // ── Scroll UI ─────────────────────────────────────────────
+  window.addEventListener('scroll', () => {
+    const max = document.body.scrollHeight - window.innerHeight;
+    document.getElementById('scroll-progress').style.width = (max > 0 ? (window.scrollY / max) * 100 : 0) + '%';
+    document.getElementById('back-to-top').classList.toggle('visible', window.scrollY > 400);
+  }, { passive: true });
 
   // ── Pagination / windowing state ──────────────────────────
   const PAGE_SIZE = 8;   // sessions fetched per request
@@ -629,26 +418,30 @@
 
     if (!allSessions.length) {
       feedEl.innerHTML = '<div class="empty-state">The chamber is silent. The feed will begin shortly.</div>';
+      document.getElementById('window-indicator').textContent = '';
       return;
     }
 
     const visible = getVisibleSessions();
     updateSearchCount(visible.length);
 
+    const wi = document.getElementById('window-indicator');
+    wi.textContent = windowEnd > 0 ? `${windowStart + 1}–${windowEnd}` : '';
+
     if (!visible.length) {
-      feedEl.innerHTML = '<div class="empty-state">No sessions match your search.</div>';
+      feedEl.innerHTML = '<div class="empty-state">No sessions match.</div>';
       return;
     }
 
-    for (let i = 0; i < visible.length; i++) {
-      const { session, globalIndex } = visible[i];
+    for (const { session, globalIndex } of visible) {
       feedEl.appendChild(buildSessionEl(session, globalIndex));
-      if (i < visible.length - 1) {
-        const hr = document.createElement('hr');
-        hr.className = 'session-divider';
-        hr.dataset.da = globalIndex; // divider-after marker
-        feedEl.appendChild(hr);
-      }
+    }
+
+    if (!hasMore && windowEnd >= allSessions.length && !searchKeyword && !dateFrom && !dateTo) {
+      const end = document.createElement('div');
+      end.className = 'feed-end';
+      end.innerHTML = '<div class="feed-end-label">The chamber rests.</div>';
+      feedEl.appendChild(end);
     }
   }
 
@@ -662,40 +455,47 @@
       .filter(({ session }) => sessionMatchesSearch(session));
   }
 
-  // ── Build a single session element ───────────────────────
+  // ── Build a single session card ──────────────────────────
   function buildSessionEl(session, globalIndex) {
     const items      = session.items || [];
     const thothClose = items.find(i => i.pantheon_personas?.name === 'Thoth');
     const voiceItems = items.filter(i => i.pantheon_personas?.name !== 'Thoth');
-    const visible    = voiceItems.slice(0, 4);
+    const vis        = voiceItems.slice(0, 4);
     const overflow   = voiceItems.slice(4);
     const hasClose   = !!thothClose;
 
-    const visibleHtml = visible.map((item, i) => {
-      const isLast = i === visible.length - 1 && overflow.length === 0 && !hasClose;
-      return renderThreadItem(item, isLast);
+    // Voice presence dots (unique personas in order spoken)
+    const seen = new Set();
+    const voiceDots = items.filter(i => {
+      const n = i.pantheon_personas?.name;
+      if (!n || n === 'Thoth' || seen.has(n)) return false;
+      seen.add(n); return true;
+    }).map(i => {
+      const color = PERSONA_COLOR[i.pantheon_personas.name] || '#333';
+      return `<span class="voice-dot" style="background:${color}" title="${esc(i.pantheon_personas.name)}"></span>`;
     }).join('');
 
+    const topicHtml = session.topic ? `<span class="topic-chip">${esc(session.topic)}</span>` : '';
+    const typeHtml  = session.trigger_type === 'historical' ? `<span class="session-type-tag">Historical</span>` : '';
+
+    const visHtml = vis.map((item, i) =>
+      renderThreadItem(item, i === vis.length - 1 && !overflow.length && !hasClose)
+    ).join('');
+
     let overflowHtml = '';
-    if (overflow.length > 0) {
+    if (overflow.length) {
       const oHtml = overflow.map((item, i) =>
         renderThreadItem(item, i === overflow.length - 1 && !hasClose)
       ).join('');
       const label = `the chamber continues — ${overflow.length} more ${overflow.length === 1 ? 'voice' : 'voices'}`;
-      overflowHtml = `
-        <button class="thread-expand" onclick="toggleExpand(this)" data-count="${overflow.length}">
-          <span class="expand-label">${esc(label)}</span>
-        </button>
-        <div class="thread-overflow">${oHtml}</div>`;
+      overflowHtml = `<button class="thread-expand" onclick="toggleExpand(this)" data-count="${overflow.length}"><span class="expand-label">${esc(label)}</span></button><div class="thread-overflow">${oHtml}</div>`;
     }
 
-    let closeHtml = '';
-    if (thothClose) {
-      closeHtml = `
-        <div class="thoth-close-divider"></div>
+    const closeHtml = thothClose ? `
+      <div class="thoth-close">
         <div class="thoth-close-content">${esc(thothClose.content)}</div>
-        <div class="thoth-close-meta">${fmt(thothClose.created_at)}</div>`;
-    }
+        <div class="thoth-close-meta">${fmt(thothClose.created_at)}</div>
+      </div>` : '';
 
     let sourceHtml = '';
     if (session.trigger_type === 'news' && session.trigger_source_url) {
@@ -704,27 +504,44 @@
       sourceHtml = `<div class="session-source">${esc(session.trigger_content)}</div>`;
     }
 
-    const typeLabel = session.trigger_type === 'historical' ? 'Historical · ' : '';
-    const topicTag  = session.topic ? `<span class="session-topic">${esc(session.topic)}</span>` : '';
+    const raw = session.thoth_question || session.thoth_frame || '';
+    const preview = esc(raw.slice(0, 140)) + (raw.length > 140 ? '…' : '');
 
     const el = document.createElement('div');
     el.className = 'session';
-    el.dataset.id = session.id;
-    el.dataset.si = globalIndex; // session-index marker for height measurement
+    el.dataset.open = 'true';
+    el.dataset.id   = session.id;
+    el.dataset.si   = globalIndex;
     el.innerHTML = `
-      <div class="session-meta">${topicTag}${topicTag ? ' · ' : ''}${esc(typeLabel)}${fmt(session.created_at)}</div>
-      ${sourceHtml}
-      <div class="thoth-open">
-        <div class="thoth-label">Thoth — The Record</div>
-        ${session.thoth_frame    ? `<div class="thoth-frame">${esc(session.thoth_frame)}</div>` : ''}
-        ${session.thoth_question ? `<div class="thoth-question">${esc(session.thoth_question)}</div>` : ''}
+      <div class="session-header" onclick="toggleSession(this)">
+        <div class="session-header-left">
+          <span class="session-num">#${globalIndex + 1}</span>
+          <div class="session-header-meta">
+            ${topicHtml}${typeHtml}<span class="session-date">${fmt(session.created_at)}</span>
+          </div>
+        </div>
+        <div class="voice-dots">${voiceDots}</div>
+        <button class="collapse-btn" aria-label="Toggle">−</button>
       </div>
-      <div class="thread">
-        ${visibleHtml}
-        ${overflowHtml}
-      </div>
-      ${closeHtml}`;
+      ${preview ? `<div class="session-preview">${preview}</div>` : ''}
+      <div class="session-body">
+        ${sourceHtml}
+        <div class="thoth-open">
+          <div class="thoth-label">Thoth — The Record</div>
+          ${session.thoth_frame    ? `<div class="thoth-frame">${esc(session.thoth_frame)}</div>` : ''}
+          ${session.thoth_question ? `<div class="thoth-question">${esc(session.thoth_question)}</div>` : ''}
+        </div>
+        <div class="thread">${visHtml}${overflowHtml}</div>
+        ${closeHtml}
+      </div>`;
     return el;
+  }
+
+  function toggleSession(header) {
+    const s = header.closest('.session');
+    const open = s.dataset.open === 'true';
+    s.dataset.open = open ? 'false' : 'true';
+    header.querySelector('.collapse-btn').textContent = open ? '+' : '−';
   }
 
   // ── Reset (topic change or realtime insert) ───────────────
@@ -736,6 +553,7 @@
     windowEnd    = 0;
     topSpacerPx  = 0;
     document.getElementById('top-spacer').style.height = '0';
+    document.getElementById('window-indicator').textContent = '';
     document.getElementById('feed').innerHTML = '<div class="empty-state">Loading...</div>';
     await extendDown();
   }
@@ -845,8 +663,8 @@
       const res = await fetch('/pantheon/session-count');
       const { count } = await res.json();
       const n = count || 0;
-      document.getElementById('session-counter').textContent =
-        `${n} ${n === 1 ? 'session' : 'sessions'} recorded. Thirteen voices. The feed does not stop.`;
+      document.getElementById('counter-main').textContent =
+        `${n} ${n === 1 ? 'session' : 'sessions'} · Thirteen voices · The feed does not stop.`;
     } catch {}
   }
 
