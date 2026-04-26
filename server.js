@@ -1058,7 +1058,7 @@ app.get('/pantheon/session-count', async (req, res) => {
 
 // Trigger — responds immediately, runs full 14-voice session in background
 // Each session takes ~3–5 minutes (15 sequential AI calls). Fire and forget.
-app.post('/pantheon/trigger', async (req, res) => {
+async function handlePantheonTrigger(req, res) {
   try {
     const { data: personas, error: personaError } = await supabase
       .from('pantheon_personas')
@@ -1130,6 +1130,15 @@ app.post('/pantheon/trigger', async (req, res) => {
     console.error('[Pantheon trigger error]', err.message);
     if (!res.headersSent) res.status(500).json({ error: err.message });
   }
+}
+
+app.post('/pantheon/trigger', handlePantheonTrigger);
+
+// External cron — GET with optional secret for cron-job.org
+app.get('/pantheon/trigger', (req, res) => {
+  const secret = process.env.PANTHEON_CRON_SECRET;
+  if (secret && req.query.secret !== secret) return res.status(401).json({ error: 'Unauthorized' });
+  return handlePantheonTrigger(req, res);
 });
 
 // Feed — legacy endpoint, kept for backwards compatibility
