@@ -849,10 +849,12 @@ app.post('/pantheon/trigger', async (req, res) => {
     const toRun = newItems.slice(0, 2); // cap at 2 sessions per trigger
     let triggerType = 'news';
 
+    const forceHistorical = req.body?.force === 'historical' || req.query?.force === 'historical';
+
     if (!toRun.length) {
       const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
       const { data: recent } = await supabase.from('pantheon_sessions').select('id').gte('created_at', sixHoursAgo).limit(1);
-      if (!recent?.length) triggerType = 'historical';
+      if (!recent?.length || forceHistorical) triggerType = 'historical';
       else return res.json({ message: 'No new headlines and recent session exists. Chamber is resting.', sessions_queued: 0 });
     }
 
