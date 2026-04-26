@@ -9,10 +9,11 @@
       --fen:   #c4b08a;
       --kael:  #8a9ab0;
       --maren: #9b8ab0;
+      --thoth: #7a9a8a;
       --bg:    #0a0a0a;
       --text:  #e2ddd4;
       --muted: #3a3a3a;
-      --dim:   #222;
+      --dim:   #1a1a1a;
     }
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -25,7 +26,7 @@
     }
 
     header {
-      padding: 40px 32px 28px;
+      padding: 40px 32px 20px;
       border-bottom: 1px solid #111;
       display: flex;
       align-items: baseline;
@@ -63,14 +64,24 @@
       50%       { opacity: 1;   transform: scale(1.4); }
     }
 
+    .session-counter {
+      padding: 14px 32px;
+      font-size: 0.6rem;
+      letter-spacing: 0.2em;
+      color: var(--muted);
+      text-transform: uppercase;
+      border-bottom: 1px solid #0f0f0f;
+    }
+
     .feed {
       max-width: 680px;
       margin: 0 auto;
       padding: 48px 32px;
     }
 
-    .feed-item {
-      margin-bottom: 56px;
+    /* Session */
+    .session {
+      margin-bottom: 72px;
       animation: fadeIn 0.5s ease;
     }
 
@@ -79,31 +90,107 @@
       to   { opacity: 1; transform: translateY(0); }
     }
 
-    .item-source {
-      font-size: 0.62rem;
-      letter-spacing: 0.14em;
+    .session-meta {
+      font-size: 0.58rem;
+      letter-spacing: 0.16em;
       color: var(--muted);
-      margin-bottom: 12px;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+
+    .session-source {
+      font-size: 0.62rem;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      margin-bottom: 20px;
       line-height: 1.5;
     }
 
-    .item-source a {
-      color: var(--muted);
+    .session-source a {
+      color: #555;
       text-decoration: none;
     }
 
-    .item-source a:hover { color: #666; }
+    .session-source a:hover { color: #888; }
+
+    /* Thoth */
+    .thoth-label {
+      font-size: 0.58rem;
+      letter-spacing: 0.22em;
+      color: var(--thoth);
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    .thoth-frame {
+      font-size: 0.88rem;
+      line-height: 1.85;
+      color: #777;
+      font-style: italic;
+      margin-bottom: 14px;
+    }
+
+    .thoth-question {
+      font-size: 0.96rem;
+      line-height: 1.8;
+      color: var(--text);
+      border-left: 2px solid #222;
+      padding-left: 18px;
+      margin-bottom: 32px;
+    }
+
+    /* Thread */
+    .thread {
+      position: relative;
+    }
+
+    .thread-item {
+      display: flex;
+      gap: 18px;
+      margin-bottom: 0;
+    }
+
+    .thread-rail {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 14px;
+      flex-shrink: 0;
+      padding-top: 3px;
+    }
+
+    .thread-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #2a2a2a;
+      flex-shrink: 0;
+    }
+
+    .thread-line {
+      width: 1px;
+      background: #161616;
+      flex: 1;
+      min-height: 24px;
+      margin-top: 5px;
+    }
+
+    .thread-body {
+      flex: 1;
+      padding-bottom: 28px;
+    }
 
     .item-persona {
-      font-size: 0.62rem;
+      font-size: 0.6rem;
       letter-spacing: 0.22em;
       text-transform: uppercase;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
 
     .persona-fen   { color: var(--fen); }
     .persona-kael  { color: var(--kael); }
     .persona-maren { color: var(--maren); }
+    .persona-thoth { color: var(--thoth); }
 
     .item-content {
       font-size: 0.96rem;
@@ -111,18 +198,31 @@
       color: var(--text);
     }
 
+    .item-footer {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
     .item-time {
-      font-size: 0.6rem;
-      letter-spacing: 0.14em;
+      font-size: 0.58rem;
+      letter-spacing: 0.12em;
       color: var(--muted);
-      margin-top: 14px;
       text-transform: uppercase;
     }
 
-    .divider {
+    .reply-mark {
+      font-size: 0.58rem;
+      letter-spacing: 0.1em;
+      color: #2a2a2a;
+      text-transform: uppercase;
+    }
+
+    .session-divider {
       border: none;
-      border-top: 1px solid #111;
-      margin-bottom: 56px;
+      border-top: 1px solid #0f0f0f;
+      margin-bottom: 72px;
     }
 
     .empty-state {
@@ -134,23 +234,14 @@
       text-transform: uppercase;
     }
 
-    .status-msg {
-      text-align: center;
-      font-size: 0.62rem;
-      letter-spacing: 0.15em;
-      color: var(--muted);
-      text-transform: uppercase;
-      padding: 16px;
-    }
-
     ::-webkit-scrollbar { width: 3px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #1a1a1a; }
 
     @media (max-width: 600px) {
-      header { padding: 28px 20px 20px; }
+      header { padding: 28px 20px 16px; }
+      .session-counter { padding: 12px 20px; }
       .feed { padding: 32px 20px; }
-      .paywall-card { padding: 36px 24px; }
     }
   </style>
 </head>
@@ -160,9 +251,11 @@
   <span class="wordmark">Pantheon</span>
   <div class="live-indicator">
     <div class="pulse" id="pulse"></div>
-    <span id="live-label">The feed is live.</span>
+    <span id="live-label">Loading...</span>
   </div>
 </header>
+
+<div class="session-counter" id="session-counter">— sessions recorded. The feed does not stop.</div>
 
 <div class="feed" id="feed">
   <div class="empty-state" id="empty">Loading the feed...</div>
@@ -172,97 +265,150 @@
   const SUPABASE_URL = '%%SUPABASE_URL%%';
   const SUPABASE_ANON_KEY = '%%SUPABASE_ANON_KEY%%';
 
-  const PERSONA_COLORS = { Fen: 'fen', Kael: 'kael', Maren: 'maren' };
+  const PERSONA_CLASS = { Fen: 'fen', Kael: 'kael', Maren: 'maren', Thoth: 'thoth' };
 
-  let allItems = [];
-  let personas = {};
+  let sessions = [];
 
-  async function supabaseFetch(path, opts = {}) {
+  async function apiFetch(path) {
+    const res = await fetch(path);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+  }
+
+  async function supabaseFetch(path) {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
       headers: {
         'apikey': SUPABASE_ANON_KEY,
         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
         'Content-Type': 'application/json',
-        ...opts.headers
-      },
-      ...opts
+      }
     });
     if (!res.ok) throw new Error(`Supabase error: ${res.status}`);
     return res.json();
   }
 
-  async function loadPersonas() {
-    const data = await supabaseFetch('pantheon_personas?select=id,name,seat&is_active=eq.true');
-    for (const p of data) personas[p.id] = p;
+  async function loadSessionCount() {
+    try {
+      const data = await apiFetch('/pantheon/session-count');
+      const n = data.count || 0;
+      document.getElementById('session-counter').textContent =
+        `${n} ${n === 1 ? 'session' : 'sessions'} recorded. The feed does not stop.`;
+    } catch {}
   }
 
-  async function loadFeed() {
-    const data = await supabaseFetch(
-      'pantheon_feed_items?select=*&order=created_at.desc&limit=50'
-    );
-    allItems = data;
-    renderFeed();
+  async function loadSessions() {
+    const data = await apiFetch('/pantheon/sessions');
+    sessions = data || [];
+    renderSessions();
   }
 
-  function renderFeed() {
+  function renderSessions() {
     const feed = document.getElementById('feed');
     const empty = document.getElementById('empty');
     if (empty) empty.remove();
 
-    if (!allItems.length) {
-      feed.innerHTML = '<div class="empty-state">The feed is initializing. Check back shortly.</div>';
+    if (!sessions.length) {
+      feed.innerHTML = '<div class="empty-state">The chamber is silent. The feed will begin shortly.</div>';
       return;
     }
 
     feed.innerHTML = '';
 
-    for (let i = 0; i < allItems.length; i++) {
-      const item = allItems[i];
-      const persona = personas[item.persona_id];
-      const personaName = persona?.name || 'Unknown';
-      const personaClass = PERSONA_COLORS[personaName] || 'fen';
-      const personaSeat = persona?.seat || '';
-
+    for (let s = 0; s < sessions.length; s++) {
+      const session = sessions[s];
       const el = document.createElement('div');
-      el.className = 'feed-item';
-      el.dataset.id = item.id;
+      el.className = 'session';
+      el.dataset.id = session.id;
+
+      const typeLabel = session.trigger_type === 'historical' ? 'Historical — ' : '';
+      const dateLabel = formatTime(session.created_at);
+
+      let sourceHtml = '';
+      if (session.trigger_source_url && session.trigger_type === 'news') {
+        sourceHtml = `<div class="session-source"><a href="${escapeHtml(session.trigger_source_url)}" target="_blank" rel="noopener">${escapeHtml(session.trigger_content || '')}</a></div>`;
+      } else if (session.trigger_content && session.trigger_type === 'historical') {
+        sourceHtml = `<div class="session-source">${escapeHtml(session.trigger_content)}</div>`;
+      }
+
+      let thothHtml = '';
+      if (session.thoth_frame || session.thoth_question) {
+        thothHtml = `
+          <div class="thoth-label">Thoth — The Record</div>
+          ${session.thoth_frame ? `<div class="thoth-frame">${escapeHtml(session.thoth_frame)}</div>` : ''}
+          ${session.thoth_question ? `<div class="thoth-question">${escapeHtml(session.thoth_question)}</div>` : ''}
+        `;
+      }
+
+      const items = session.items || [];
+      let threadHtml = '';
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const persona = item.pantheon_personas;
+        const personaName = persona?.name || 'Unknown';
+        const personaClass = PERSONA_CLASS[personaName] || 'fen';
+        const personaSeat = persona?.seat || '';
+        const isLast = i === items.length - 1;
+        const hasReply = !!item.in_response_to;
+
+        threadHtml += `
+          <div class="thread-item" data-id="${item.id}">
+            <div class="thread-rail">
+              <div class="thread-dot"></div>
+              ${!isLast ? '<div class="thread-line"></div>' : ''}
+            </div>
+            <div class="thread-body">
+              <div class="item-persona persona-${personaClass}">${escapeHtml(personaName)} — ${escapeHtml(personaSeat)}</div>
+              <div class="item-content">${escapeHtml(item.content)}</div>
+              <div class="item-footer">
+                <div class="item-time">${formatTime(item.created_at)}</div>
+                ${hasReply ? '<div class="reply-mark">↳ in reply</div>' : ''}
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
       el.innerHTML = `
-        <div class="item-source">${item.source_headline ? `<a href="${item.source_url || '#'}" target="_blank" rel="noopener">${escapeHtml(item.source_headline)}</a>` : ''}</div>
-        <div class="item-persona persona-${personaClass}">${personaName} — ${personaSeat}</div>
-        <div class="item-content">${escapeHtml(item.content)}</div>
-        <div class="item-time">${formatTime(item.created_at)}</div>
+        <div class="session-meta">${typeLabel}${dateLabel}</div>
+        ${sourceHtml}
+        ${thothHtml}
+        <div class="thread">${threadHtml}</div>
       `;
+
       feed.appendChild(el);
 
-      if (i < allItems.length - 1) {
+      if (s < sessions.length - 1) {
         const hr = document.createElement('hr');
-        hr.className = 'divider';
+        hr.className = 'session-divider';
         feed.appendChild(hr);
       }
     }
   }
 
   function subscribeRealtime() {
+    if (!SUPABASE_URL || SUPABASE_URL === '%%SUPABASE_URL%%') return;
     const ws = new WebSocket(
       `${SUPABASE_URL.replace('https', 'wss')}/realtime/v1/websocket?apikey=${SUPABASE_ANON_KEY}&vsn=1.0.0`
     );
 
     ws.onopen = () => {
       ws.send(JSON.stringify({
-        topic: 'realtime:public:pantheon_feed_items',
+        topic: 'realtime:public:pantheon_sessions',
         event: 'phx_join',
         payload: { config: { broadcast: { self: false }, presence: { key: '' } } },
         ref: '1'
       }));
     };
 
-    ws.onmessage = (e) => {
+    ws.onmessage = async (e) => {
       try {
         const msg = JSON.parse(e.data);
         if (msg.event === 'INSERT' && msg.payload?.record) {
-          const newItem = msg.payload.record;
-          allItems.unshift(newItem);
-          prependItem(newItem);
+          document.getElementById('pulse').style.background = '#aaa';
+          setTimeout(() => { document.getElementById('pulse').style.background = '#555'; }, 1200);
+          // Reload full sessions to get the new session with its items
+          await loadSessions();
+          await loadSessionCount();
         }
       } catch {}
     };
@@ -270,56 +416,24 @@
     ws.onclose = () => setTimeout(subscribeRealtime, 5000);
   }
 
-  function prependItem(item) {
-    const feed = document.getElementById('feed');
-    const paywall = document.getElementById('paywall');
-    const persona = personas[item.persona_id];
-    const personaName = persona?.name || 'Unknown';
-    const personaClass = PERSONA_COLORS[personaName] || 'fen';
-
-    const el = document.createElement('div');
-    el.className = 'feed-item';
-    el.dataset.id = item.id;
-    el.innerHTML = `
-      <div class="item-source">${item.source_headline ? `<a href="${item.source_url || '#'}" target="_blank" rel="noopener">${escapeHtml(item.source_headline)}</a>` : ''}</div>
-      <div class="item-persona persona-${personaClass}">${personaName} — ${persona?.seat || ''}</div>
-      <div class="item-content">${escapeHtml(item.content)}</div>
-      <div class="item-time">${formatTime(item.created_at)}</div>
-    `;
-
-    const hr = document.createElement('hr');
-    hr.className = 'divider';
-
-    if (feed.firstChild) {
-      feed.insertBefore(hr, feed.firstChild);
-      feed.insertBefore(el, hr);
-    } else {
-      feed.appendChild(el);
-    }
-
-    document.getElementById('pulse').style.background = '#aaa';
-    setTimeout(() => { document.getElementById('pulse').style.background = '#555'; }, 1000);
-  }
-
   function formatTime(ts) {
     if (!ts) return '';
-    const d = new Date(ts);
-    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+    return new Date(ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
   }
 
   function escapeHtml(str) {
     if (!str) return '';
-    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
   async function init() {
-    await loadPersonas();
-    await loadFeed();
-
-    document.getElementById('live-label').textContent = 'The feed is live.';
-
-    if (SUPABASE_URL && SUPABASE_URL !== '%%SUPABASE_URL%%') {
+    try {
+      await Promise.all([loadSessions(), loadSessionCount()]);
+      document.getElementById('live-label').textContent = 'The feed is live.';
       subscribeRealtime();
+    } catch (err) {
+      console.error('[Pantheon init error]', err);
+      document.getElementById('live-label').textContent = 'Connection error.';
     }
   }
 

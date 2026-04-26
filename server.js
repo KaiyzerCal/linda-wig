@@ -633,6 +633,117 @@ app.post('/linda/zapier/webhook', async (req, res) => {
 
 // ─── PANTHEON ────────────────────────────────────────────────────────────────
 
+const PANTHEON_RSS_FEEDS = [
+  'https://feeds.bbci.co.uk/news/world/rss.xml',
+  'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',
+  'https://feeds.reuters.com/reuters/topNews',
+];
+
+function parseRssItems(xml) {
+  const items = [];
+  const matches = xml.match(/<item[\s\S]*?<\/item>/g) || [];
+  for (const item of matches.slice(0, 3)) {
+    const titleMatch = item.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/) ||
+                       item.match(/<title>([\s\S]*?)<\/title>/);
+    const linkMatch  = item.match(/<link>([\s\S]*?)<\/link>/) ||
+                       item.match(/<guid[^>]*>(https?:\/\/[^<]+)<\/guid>/);
+    const title = titleMatch?.[1]?.trim();
+    const link  = linkMatch?.[1]?.trim();
+    if (title && link) items.push({ title, link });
+  }
+  return items;
+}
+
+async function callPersona(systemPrompt, userMessage, maxTokens = 280) {
+  const res = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: maxTokens,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userMessage }],
+  });
+  return res.content[0]?.type === 'text' ? res.content[0].text.trim() : '';
+}
+
+async function runPantheonSession(personas, triggerType, headline, sourceUrl) {
+  const thoth = personas.find(p => p.name === 'Thoth');
+  const fen   = personas.find(p => p.name === 'Fen');
+  const kael  = personas.find(p => p.name === 'Kael');
+  const maren = personas.find(p => p.name === 'Maren');
+
+  if (!thoth || !fen || !kael || !maren) throw new Error('Missing one or more personas');
+
+  // Step 1 — Thoth opens
+  let thothPrompt, triggerContent;
+  if (triggerType === 'news') {
+    triggerContent = headline;
+    thothPrompt = `A new event has entered the record. Frame it in two sentences without interpretation. Then ask the one question that most precisely opens it. Respond in this exact format — FRAME: [your frame] QUESTION: [your question]\n\nThe event: ${headline}`;
+  } else {
+    thothPrompt = `The news cycle is quiet. Reach into the historical record. Find the event from human history that most precisely rhymes with the current state of the world. Name the event. Frame why it rhymes. Ask the question the current moment most needs to hear from it. Respond in this exact format — EVENT: [historical event and date] FRAME: [why it rhymes now] QUESTION: [the question]`;
+  }
+
+  const thothRaw = await callPersona(thoth.system_prompt, thothPrompt, 320);
+
+  let frame, question;
+  if (triggerType === 'news') {
+    frame    = (thothRaw.match(/FRAME:\s*([\s\S]*?)(?=QUESTION:|$)/i)?.[1] || thothRaw).trim();
+    question = (thothRaw.match(/QUESTION:\s*([\s\S]*?)$/i)?.[1] || '').trim();
+  } else {
+    const eventStr = (thothRaw.match(/EVENT:\s*([\s\S]*?)(?=FRAME:|$)/i)?.[1] || '').trim();
+    frame    = (thothRaw.match(/FRAME:\s*([\s\S]*?)(?=QUESTION:|$)/i)?.[1] || '').trim();
+    question = (thothRaw.match(/QUESTION:\s*([\s\S]*?)$/i)?.[1] || '').trim();
+    triggerContent = eventStr || thothRaw.slice(0, 200);
+  }
+
+  const { data: session, error: sessionErr } = await supabase
+    .from('pantheon_sessions')
+    .insert([{ trigger_type: triggerType, trigger_content: triggerContent, trigger_source_url: sourceUrl || null, thoth_frame: frame, thoth_question: question }])
+    .select().single();
+
+  if (sessionErr) throw new Error('Session insert failed: ' + sessionErr.message);
+  const sid = session.id;
+  const sourceHeadline = triggerType === 'news' ? headline : triggerContent;
+
+  const baseContext = `${frame}\n\nThoth asks: ${question}\n\nThe event: ${triggerContent}`;
+
+  // Step 2 — Fen first
+  const fenText1 = await callPersona(fen.system_prompt, baseContext);
+  const { data: fenItem1 } = await supabase.from('pantheon_feed_items')
+    .insert([{ persona_id: fen.id, content: fenText1, source_headline: sourceHeadline, source_url: sourceUrl || null, session_id: sid, in_response_to: null }])
+    .select().single();
+
+  // Step 3 — Kael, has heard Fen
+  const kaelText = await callPersona(
+    kael.system_prompt + '\n\nFen has already spoken. You have heard him. Respond to the event and to what Fen said if it warrants response.',
+    `${baseContext}\n\nFen said: "${fenText1}"`
+  );
+  const { data: kaelItem } = await supabase.from('pantheon_feed_items')
+    .insert([{ persona_id: kael.id, content: kaelText, source_headline: sourceHeadline, source_url: sourceUrl || null, session_id: sid, in_response_to: fenItem1?.id || null }])
+    .select().single();
+
+  // Step 4 — Maren, has heard Fen and Kael
+  const marenText = await callPersona(
+    maren.system_prompt + '\n\nFen and Kael have spoken. You have heard them both.',
+    `${baseContext}\n\nFen said: "${fenText1}"\n\nKael said: "${kaelText}"`
+  );
+  const { data: marenItem } = await supabase.from('pantheon_feed_items')
+    .insert([{ persona_id: maren.id, content: marenText, source_headline: sourceHeadline, source_url: sourceUrl || null, session_id: sid, in_response_to: kaelItem?.id || null }])
+    .select().single();
+
+  // Step 5 — Fen closes or goes silent
+  const fenCloseText = await callPersona(
+    fen.system_prompt + '\n\nYou have heard Kael and Maren respond. You may have the last word or you may be silent. If you speak make it count. If the others have said what needed saying respond with exactly: [silence]',
+    `${baseContext}\n\nYou said: "${fenText1}"\n\nKael said: "${kaelText}"\n\nMaren said: "${marenText}"`
+  );
+
+  const isSilent = !fenCloseText || fenCloseText.replace(/\s/g, '').toLowerCase() === '[silence]' || fenCloseText.includes('[silence]');
+  if (!isSilent) {
+    await supabase.from('pantheon_feed_items')
+      .insert([{ persona_id: fen.id, content: fenCloseText, source_headline: sourceHeadline, source_url: sourceUrl || null, session_id: sid, in_response_to: marenItem?.id || null }]);
+  }
+
+  return sid;
+}
+
 // Serve pantheon.html with env vars injected for Supabase client
 app.get('/pantheon', (req, res) => {
   try {
@@ -651,29 +762,52 @@ app.get('/pantheon/health', (req, res) => {
   res.json({ status: 'Pantheon is operational', timestamp: new Date().toISOString() });
 });
 
-// Manual ingest trigger — fetches RSS, generates persona responses, saves to feed
-app.post('/pantheon/trigger', async (req, res) => {
-  const RSS_FEEDS = [
-    'https://feeds.bbci.co.uk/news/world/rss.xml',
-    'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',
-    'https://feeds.reuters.com/reuters/topNews',
-  ];
+// Sessions — returns sessions with their feed items nested, most recent first
+app.get('/pantheon/sessions', async (req, res) => {
+  try {
+    const { data: sessions, error } = await supabase
+      .from('pantheon_sessions')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (error) throw error;
+    if (!sessions?.length) return res.json([]);
 
-  function parseRssItems(xml) {
-    const items = [];
-    const matches = xml.match(/<item[\s\S]*?<\/item>/g) || [];
-    for (const item of matches.slice(0, 3)) {
-      const titleMatch = item.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/) ||
-                         item.match(/<title>([\s\S]*?)<\/title>/);
-      const linkMatch  = item.match(/<link>([\s\S]*?)<\/link>/) ||
-                         item.match(/<guid[^>]*>(https?:\/\/[^<]+)<\/guid>/);
-      const title = titleMatch?.[1]?.trim();
-      const link  = linkMatch?.[1]?.trim();
-      if (title && link) items.push({ title, link });
+    const sessionIds = sessions.map(s => s.id);
+    const { data: items, error: itemsError } = await supabase
+      .from('pantheon_feed_items')
+      .select('*, pantheon_personas(id, name, seat)')
+      .in('session_id', sessionIds)
+      .order('created_at', { ascending: true });
+    if (itemsError) throw itemsError;
+
+    const bySession = {};
+    for (const item of items || []) {
+      if (!bySession[item.session_id]) bySession[item.session_id] = [];
+      bySession[item.session_id].push(item);
     }
-    return items;
-  }
 
+    res.json(sessions.map(s => ({ ...s, items: bySession[s.id] || [] })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Session count for the counter line
+app.get('/pantheon/session-count', async (req, res) => {
+  try {
+    const { count, error } = await supabase
+      .from('pantheon_sessions')
+      .select('*', { count: 'exact', head: true });
+    if (error) throw error;
+    res.json({ count: count || 0 });
+  } catch (err) {
+    res.json({ count: 0 });
+  }
+});
+
+// Trigger — full dialog session: Thoth opens, Fen/Kael/Maren respond, Fen closes
+app.post('/pantheon/trigger', async (req, res) => {
   try {
     const { data: personas, error: personaError } = await supabase
       .from('pantheon_personas')
@@ -690,67 +824,61 @@ app.post('/pantheon/trigger', async (req, res) => {
       .order('created_at', { ascending: false })
       .limit(200);
 
-    const existingUrls = new Set((existing || []).map(r => r.source_url));
+    const existingUrls = new Set((existing || []).map(r => r.source_url).filter(Boolean));
     const newItems = [];
 
-    for (const feedUrl of RSS_FEEDS) {
+    for (const feedUrl of PANTHEON_RSS_FEEDS) {
       try {
-        const feedRes = await fetch(feedUrl, {
-          headers: { 'User-Agent': 'PantheonFeed/1.0' },
-          signal: AbortSignal.timeout(8000),
-        });
+        const feedRes = await fetch(feedUrl, { headers: { 'User-Agent': 'PantheonFeed/1.0' }, signal: AbortSignal.timeout(8000) });
         if (!feedRes.ok) continue;
         const xml = await feedRes.text();
         for (const item of parseRssItems(xml)) {
-          if (!existingUrls.has(item.link)) {
-            newItems.push(item);
-            existingUrls.add(item.link);
-          }
+          if (!existingUrls.has(item.link)) { newItems.push(item); existingUrls.add(item.link); }
         }
       } catch (e) {
-        console.error(`[Pantheon] Feed fetch failed: ${feedUrl}`, e.message);
+        console.error(`[Pantheon] RSS fetch failed: ${feedUrl}`, e.message);
       }
     }
 
-    if (!newItems.length) {
-      return res.json({ message: 'No new headlines', generated: 0 });
-    }
-
-    let generated = 0;
+    const sessionsCreated = [];
     const errors = [];
 
-    for (const item of newItems) {
-      for (const persona of personas) {
+    if (newItems.length) {
+      for (const item of newItems) {
         try {
-          const aiRes = await anthropic.messages.create({
-            model: 'claude-sonnet-4-6',
-            max_tokens: 180,
-            system: persona.system_prompt,
-            messages: [{ role: 'user', content: `The following just entered the record: ${item.title}. Speak.` }],
-          });
-          const content = aiRes.content[0]?.type === 'text' ? aiRes.content[0].text : '';
-          const { error: insertError } = await supabase.from('pantheon_feed_items').insert([{
-            persona_id: persona.id,
-            content,
-            source_headline: item.title,
-            source_url: item.link,
-          }]);
-          if (insertError) errors.push(insertError.message);
-          else generated++;
+          const sid = await runPantheonSession(personas, 'news', item.title, item.link);
+          sessionsCreated.push(sid);
         } catch (e) {
-          errors.push(`${persona.name}/${item.title.slice(0, 40)}: ${e.message}`);
+          errors.push(e.message);
+        }
+      }
+    } else {
+      // No new news — check if a historical session is warranted
+      const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+      const { data: recent } = await supabase
+        .from('pantheon_sessions')
+        .select('id')
+        .gte('created_at', sixHoursAgo)
+        .limit(1);
+
+      if (!recent?.length) {
+        try {
+          const sid = await runPantheonSession(personas, 'historical', null, null);
+          sessionsCreated.push(sid);
+        } catch (e) {
+          errors.push(e.message);
         }
       }
     }
 
-    res.json({ message: 'Ingest complete', new_headlines: newItems.length, generated, errors });
+    res.json({ message: 'Trigger complete', sessions_created: sessionsCreated.length, session_ids: sessionsCreated, errors });
   } catch (err) {
     console.error('[Pantheon trigger error]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Feed — public, joined with persona data
+// Feed — legacy endpoint, kept for backwards compatibility
 app.get('/pantheon/feed', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -771,13 +899,8 @@ app.post('/pantheon/subscribe', async (req, res) => {
   try {
     const { email, plan } = req.body;
     if (!email || !plan) return res.status(400).json({ error: 'email and plan required' });
-
-    const priceId = plan === 'monthly'
-      ? process.env.STRIPE_MONTHLY_PRICE_ID
-      : process.env.STRIPE_DAILY_PRICE_ID;
-
+    const priceId = plan === 'monthly' ? process.env.STRIPE_MONTHLY_PRICE_ID : process.env.STRIPE_DAILY_PRICE_ID;
     if (!priceId) return res.status(503).json({ error: 'Price not configured for plan: ' + plan });
-
     const origin = req.headers.origin || `${req.protocol}://${req.headers.host}`;
     const session = await stripe.checkout.sessions.create({
       mode: plan === 'monthly' ? 'subscription' : 'payment',
@@ -786,7 +909,6 @@ app.post('/pantheon/subscribe', async (req, res) => {
       success_url: `${origin}/pantheon?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/pantheon`,
     });
-
     res.json({ url: session.url });
   } catch (err) {
     console.error('[Pantheon subscribe error]', err.message);
@@ -794,7 +916,7 @@ app.post('/pantheon/subscribe', async (req, res) => {
   }
 });
 
-// Stripe webhook — handle checkout.session.completed and subscription events
+// Stripe webhook
 app.post('/pantheon/webhook', async (req, res) => {
   if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
   const sig = req.headers['stripe-signature'];
@@ -802,53 +924,27 @@ app.post('/pantheon/webhook', async (req, res) => {
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
-    console.error('[Stripe webhook signature error]', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
-
   try {
     if (event.type === 'checkout.session.completed') {
-      const session = event.data.object;
-      const email = session.customer_email || session.customer_details?.email;
-      if (!email) return res.json({ received: true });
-
-      let accessUntil;
-      if (session.mode === 'subscription') {
-        // Monthly — 31-day rolling access, renewed by invoice events
-        accessUntil = new Date(Date.now() + 31 * 24 * 60 * 60 * 1000).toISOString();
-      } else {
-        // One-time daily access
-        accessUntil = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      const s = event.data.object;
+      const email = s.customer_email || s.customer_details?.email;
+      if (email) {
+        const accessUntil = new Date(Date.now() + (s.mode === 'subscription' ? 31 : 1) * 24 * 60 * 60 * 1000).toISOString();
+        await supabase.from('pantheon_subscribers').upsert([{ email, stripe_customer_id: s.customer, stripe_subscription_id: s.subscription || null, plan: s.mode === 'subscription' ? 'monthly' : 'daily', access_until: accessUntil }], { onConflict: 'email' });
       }
-
-      await supabase.from('pantheon_subscribers').upsert(
-        [{
-          email,
-          stripe_customer_id: session.customer,
-          stripe_subscription_id: session.subscription || null,
-          plan: session.mode === 'subscription' ? 'monthly' : 'daily',
-          access_until: accessUntil,
-        }],
-        { onConflict: 'email' }
-      );
     } else if (event.type === 'invoice.payment_succeeded') {
-      const invoice = event.data.object;
-      if (invoice.subscription && invoice.customer_email) {
-        const accessUntil = new Date(Date.now() + 31 * 24 * 60 * 60 * 1000).toISOString();
-        await supabase.from('pantheon_subscribers')
-          .update({ access_until: accessUntil })
-          .eq('email', invoice.customer_email);
+      const inv = event.data.object;
+      if (inv.subscription && inv.customer_email) {
+        await supabase.from('pantheon_subscribers').update({ access_until: new Date(Date.now() + 31 * 24 * 60 * 60 * 1000).toISOString() }).eq('email', inv.customer_email);
       }
     } else if (event.type === 'customer.subscription.deleted') {
-      const sub = event.data.object;
-      await supabase.from('pantheon_subscribers')
-        .update({ access_until: new Date().toISOString() })
-        .eq('stripe_subscription_id', sub.id);
+      await supabase.from('pantheon_subscribers').update({ access_until: new Date().toISOString() }).eq('stripe_subscription_id', event.data.object.id);
     }
   } catch (err) {
     console.error('[Pantheon webhook handler error]', err.message);
   }
-
   res.json({ received: true });
 });
 
@@ -857,32 +953,18 @@ app.get('/pantheon/verify', async (req, res) => {
   const { email } = req.query;
   if (!email) return res.json({ valid: false });
   try {
-    const { data, error } = await supabase
-      .from('pantheon_subscribers')
-      .select('access_until')
-      .eq('email', email)
-      .single();
-    if (error || !data) return res.json({ valid: false });
-    const valid = data.access_until && new Date(data.access_until) > new Date();
-    res.json({ valid: !!valid });
-  } catch (err) {
-    res.json({ valid: false });
-  }
+    const { data } = await supabase.from('pantheon_subscribers').select('access_until').eq('email', email).single();
+    res.json({ valid: !!(data?.access_until && new Date(data.access_until) > new Date()) });
+  } catch { res.json({ valid: false }); }
 });
 
-// Retrieve customer email from completed Stripe session
+// Retrieve email from completed Stripe session
 app.get('/pantheon/session', async (req, res) => {
   if (!stripe) return res.json({ email: null });
-  const { session_id } = req.query;
-  if (!session_id) return res.json({ email: null });
   try {
-    const session = await stripe.checkout.sessions.retrieve(session_id);
-    const email = session.customer_email || session.customer_details?.email || null;
-    res.json({ email });
-  } catch (err) {
-    console.error('[Pantheon session error]', err.message);
-    res.json({ email: null });
-  }
+    const session = await stripe.checkout.sessions.retrieve(req.query.session_id);
+    res.json({ email: session.customer_email || session.customer_details?.email || null });
+  } catch { res.json({ email: null }); }
 });
 
 // ─── INTERFACE ───────────────────────────────────────────────────────────────
