@@ -1101,8 +1101,8 @@ async function handlePantheonTrigger(req, res) {
     const forceTopic = req.body?.topic || req.query?.topic || null;
 
     if (!toRun.length) {
-      const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
-      const { data: recent } = await supabase.from('pantheon_sessions').select('id').gte('created_at', sixHoursAgo).limit(1);
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      const { data: recent } = await supabase.from('pantheon_sessions').select('id').gte('created_at', twoHoursAgo).limit(1);
       if (!recent?.length || forceHistorical || forceTopic) triggerType = 'historical';
       else return res.json({ message: 'No new headlines and recent session exists. Chamber is resting.', sessions_queued: 0 });
     }
@@ -1290,8 +1290,8 @@ async function pantheonAutoTrigger() {
         await runPantheonSession(personas, 'news', item.title, item.link);
       }
     } else {
-      const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
-      const { data: recent } = await supabase.from('pantheon_sessions').select('id').gte('created_at', sixHoursAgo).limit(1);
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      const { data: recent } = await supabase.from('pantheon_sessions').select('id').gte('created_at', twoHoursAgo).limit(1);
       if (!recent?.length) {
         console.log('[Pantheon] No new headlines. Triggering historical session.');
         await runPantheonSession(personas, 'historical', null, null);
