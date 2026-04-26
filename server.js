@@ -6,7 +6,7 @@ const { createClient } = require('@supabase/supabase-js');
 const path = require('path');
 const fs = require('fs');
 const Stripe = require('stripe');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
 const app = express();
 app.use(cors());
@@ -20,19 +20,16 @@ app.use(express.static(path.join(__dirname)));
 const ZAPIER_SOCIAL_WEBHOOK = process.env.ZAPIER_SOCIAL_WEBHOOK || '';
 const SLACK_WEBHOOK_URL     = process.env.SLACK_WEBHOOK_URL     || '';
 
-const mailTransporter = (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD)
-  ? nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD }
-    })
-  : null;
+const resend = new Resend(process.env.RESEND_API_KEY);
+const FROM_EMAIL = process.env.FROM_EMAIL || 'onboarding@resend.dev';
 
 async function fireEmail(to, subject, body) {
-  if (!mailTransporter) throw new Error('GMAIL_USER / GMAIL_APP_PASSWORD not configured');
-  await mailTransporter.sendMail({
-    from: `Linda — WIG <${process.env.GMAIL_USER}>`,
-    to, subject, text: body
+  if (!process.env.RESEND_API_KEY) throw new Error('RESEND_API_KEY not configured');
+  const { error } = await resend.emails.send({
+    from: `Linda — WIG <${FROM_EMAIL}>`,
+    to: [to], subject, text: body
   });
+  if (error) throw new Error(error.message);
   return true;
 }
 
@@ -71,12 +68,13 @@ function parseSocialAction(text) {
 }
 
 async function fireOutreach(to, subject, body, contact_name, notes) {
-  if (!mailTransporter) throw new Error('GMAIL_USER / GMAIL_APP_PASSWORD not configured');
+  if (!process.env.RESEND_API_KEY) throw new Error('RESEND_API_KEY not configured');
   const notesSuffix = notes ? `\n\n---\nOutreach note: ${notes}` : '';
-  await mailTransporter.sendMail({
-    from: `Linda — WIG <${process.env.GMAIL_USER}>`,
-    to, subject, text: body + notesSuffix
+  const { error } = await resend.emails.send({
+    from: `Linda — WIG <${FROM_EMAIL}>`,
+    to: [to], subject, text: body + notesSuffix
   });
+  if (error) throw new Error(error.message);
   return true;
 }
 
