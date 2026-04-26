@@ -477,7 +477,7 @@
 </div>
 
 <div class="search-bar">
-  <input class="search-input" id="search-input" type="text" placeholder="Search voices, frames, questions..." oninput="onSearch()">
+  <input class="search-input" id="search-input" type="text" placeholder="Search the discourse..." oninput="onSearch()">
   <input class="date-input" id="date-from" type="date" title="From date" onchange="onSearch()">
   <input class="date-input" id="date-to" type="date" title="To date" onchange="onSearch()">
   <span class="search-count" id="search-count"></span>
@@ -782,13 +782,7 @@
       if (created > end) return false;
     }
     if (!searchKeyword) return true;
-    const haystack = [
-      session.thoth_frame     || '',
-      session.thoth_question  || '',
-      session.trigger_content || '',
-      session.topic           || '',
-      ...(session.items || []).map(i => i.content || '')
-    ].join(' ').toLowerCase();
+    const haystack = (session.items || []).map(i => i.content || '').join(' ').toLowerCase();
     return haystack.includes(searchKeyword);
   }
 
