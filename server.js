@@ -17,19 +17,19 @@ app.use('/pantheon/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname)));
 
-const ZAPIER_SOCIAL_WEBHOOK = process.env.ZAPIER_SOCIAL_WEBHOOK || '';
-const SLACK_WEBHOOK_URL     = process.env.SLACK_WEBHOOK_URL     || '';
-
-const resend = new Resend(process.env.RESEND_API_KEY);
-const FROM_EMAIL = process.env.FROM_EMAIL || 'onboarding@resend.dev';
+const ZAPIER_EMAIL_WEBHOOK    = process.env.ZAPIER_EMAIL_WEBHOOK    || '';
+const ZAPIER_SOCIAL_WEBHOOK   = process.env.ZAPIER_SOCIAL_WEBHOOK   || '';
+const ZAPIER_OUTREACH_WEBHOOK = process.env.ZAPIER_OUTREACH_WEBHOOK || '';
+const SLACK_WEBHOOK_URL       = process.env.SLACK_WEBHOOK_URL       || '';
 
 async function fireEmail(to, subject, body) {
-  if (!process.env.RESEND_API_KEY) throw new Error('RESEND_API_KEY not configured');
-  const { error } = await resend.emails.send({
-    from: `Linda — WIG <${FROM_EMAIL}>`,
-    to: [to], subject, text: body
+  if (!ZAPIER_EMAIL_WEBHOOK) throw new Error('ZAPIER_EMAIL_WEBHOOK not configured');
+  const res = await fetch(ZAPIER_EMAIL_WEBHOOK, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to, subject, body })
   });
-  if (error) throw new Error(error.message);
+  if (!res.ok) throw new Error(`Zapier responded ${res.status}`);
   return true;
 }
 
@@ -68,13 +68,13 @@ function parseSocialAction(text) {
 }
 
 async function fireOutreach(to, subject, body, contact_name, notes) {
-  if (!process.env.RESEND_API_KEY) throw new Error('RESEND_API_KEY not configured');
-  const notesSuffix = notes ? `\n\n---\nOutreach note: ${notes}` : '';
-  const { error } = await resend.emails.send({
-    from: `Linda — WIG <${FROM_EMAIL}>`,
-    to: [to], subject, text: body + notesSuffix
+  if (!ZAPIER_OUTREACH_WEBHOOK) throw new Error('ZAPIER_OUTREACH_WEBHOOK not configured');
+  const res = await fetch(ZAPIER_OUTREACH_WEBHOOK, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to, subject, body, contact_name: contact_name || '', notes: notes || '' })
   });
-  if (error) throw new Error(error.message);
+  if (!res.ok) throw new Error(`Zapier responded ${res.status}`);
   return true;
 }
 
