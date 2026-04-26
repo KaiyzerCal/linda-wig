@@ -16,8 +16,9 @@ app.use('/pantheon/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname)));
 
-const ZAPIER_EMAIL_WEBHOOK  = process.env.ZAPIER_EMAIL_WEBHOOK  || '';
-const ZAPIER_SOCIAL_WEBHOOK = process.env.ZAPIER_SOCIAL_WEBHOOK || '';
+const ZAPIER_EMAIL_WEBHOOK    = process.env.ZAPIER_EMAIL_WEBHOOK    || '';
+const ZAPIER_SOCIAL_WEBHOOK   = process.env.ZAPIER_SOCIAL_WEBHOOK   || '';
+const ZAPIER_OUTREACH_WEBHOOK = process.env.ZAPIER_OUTREACH_WEBHOOK || '';
 
 async function fireEmail(to, subject, body) {
   if (!ZAPIER_EMAIL_WEBHOOK) throw new Error('ZAPIER_EMAIL_WEBHOOK not configured');
@@ -62,6 +63,31 @@ function parseSocialAction(text) {
   const content  = contentMatch ? contentMatch[1].trim() : '';
   if (!content) return null;
   return { content, platform };
+}
+
+async function fireOutreach(to, subject, body, contact_name, notes) {
+  if (!ZAPIER_OUTREACH_WEBHOOK) throw new Error('ZAPIER_OUTREACH_WEBHOOK not configured');
+  const res = await fetch(ZAPIER_OUTREACH_WEBHOOK, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to, subject, body, contact_name: contact_name || '', notes: notes || '' })
+  });
+  if (!res.ok) throw new Error(`Zapier responded ${res.status}`);
+  return true;
+}
+
+function parseOutreachAction(text) {
+  const match = text.match(/\[SEND_OUTREACH\]([\s\S]*?)\[\/SEND_OUTREACH\]/i);
+  if (!match) return null;
+  const block = match[1];
+  const to           = (block.match(/^To:\s*(.+)$/mi)?.[1] || '').trim();
+  const subject      = (block.match(/^Subject:\s*(.+)$/mi)?.[1] || '').trim();
+  const contact_name = (block.match(/^Name:\s*(.+)$/mi)?.[1] || '').trim();
+  const notes        = (block.match(/^Notes:\s*(.+)$/mi)?.[1] || '').trim();
+  const bodyMatch    = block.match(/^Body:\s*([\s\S]*)$/mi);
+  const body         = bodyMatch ? bodyMatch[1].trim() : '';
+  if (!to || !subject) return null;
+  return { to, subject, body, contact_name, notes };
 }
 
 // Build user content block for Claude — handles text, images, PDFs, and plain text files
@@ -140,7 +166,21 @@ Content:
 Post text goes here.
 [/SEND_POST]
 
-Platform can be: twitter, linkedin, instagram, or all. Keep posts platform-appropriate — Twitter under 280 characters, LinkedIn can be longer. The system will strip the block, fire the post, and confirm. Do not announce it. Just include it.`;
+Platform can be: twitter, linkedin, instagram, or all. Keep posts platform-appropriate — Twitter under 280 characters, LinkedIn can be longer. The system will strip the block, fire the post, and confirm. Do not announce it. Just include it.
+
+OUTREACH CAPABILITY:
+You can send tracked outreach emails — these are logged separately from regular emails for campaign tracking. Use this for targeted outreach to press, podcasters, reviewers, bookstores, organizations, and any contact you are deliberately cultivating. Append this block at the very end of your response:
+
+[SEND_OUTREACH]
+To: contact@example.com
+Name: Contact's full name
+Subject: Subject line
+Notes: One line about why this contact matters or what the goal is
+Body:
+Email body here.
+[/SEND_OUTREACH]
+
+The difference between EMAIL and OUTREACH: email is operational (sending something to someone we already work with). Outreach is strategic (opening a door with someone new). Use the right one. Do not announce it. Just include it.`;
 
 const LOCKE_SYSTEM = `You are Locke.
 
@@ -420,11 +460,13 @@ app.post('/linda/chat', async (req, res) => {
     const rawReply = response.content[0].text;
 
     // Strip action blocks and fire webhooks
-    const emailAction  = parseEmailAction(rawReply);
-    const socialAction = parseSocialAction(rawReply);
+    const emailAction    = parseEmailAction(rawReply);
+    const socialAction   = parseSocialAction(rawReply);
+    const outreachAction = parseOutreachAction(rawReply);
     let reply = rawReply
       .replace(/\[SEND_EMAIL\][\s\S]*?\[\/SEND_EMAIL\]/i, '')
       .replace(/\[SEND_POST\][\s\S]*?\[\/SEND_POST\]/i, '')
+      .replace(/\[SEND_OUTREACH\][\s\S]*?\[\/SEND_OUTREACH\]/i, '')
       .trim();
 
     let emailResult = null;
@@ -454,6 +496,19 @@ app.post('/linda/chat', async (req, res) => {
       }
     }
 
+    let outreachResult = null;
+    if (outreachAction) {
+      try {
+        await fireOutreach(outreachAction.to, outreachAction.subject, outreachAction.body, outreachAction.contact_name, outreachAction.notes);
+        outreachResult = { sent: true, to: outreachAction.to, contact_name: outreachAction.contact_name };
+        reply += `\n\n[Outreach sent to ${outreachAction.contact_name || outreachAction.to} — logged]`;
+      } catch (e) {
+        console.error('[Outreach send error]', e.message);
+        reply += `\n\n[Outreach failed: ${e.message}]`;
+        outreachResult = { sent: false, error: e.message };
+      }
+    }
+
     if (principal_id) {
       const { error: saveError } = await supabase.from('conversations').insert([
         { principal_id, role: 'user', content: savedUserMessage },
@@ -462,7 +517,7 @@ app.post('/linda/chat', async (req, res) => {
       if (saveError) console.error('[Supabase save error]', saveError.message);
     }
 
-    res.json({ response: reply, principal_id, email_action: emailResult, social_action: socialResult });
+    res.json({ response: reply, principal_id, email_action: emailResult, social_action: socialResult, outreach_action: outreachResult });
   } catch (err) {
     console.error('Chat error:', err.message);
     res.status(500).json({ error: err.message });
