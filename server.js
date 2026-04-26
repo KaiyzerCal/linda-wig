@@ -1018,7 +1018,9 @@ app.get('/pantheon/health', (req, res) => {
 // Sessions — returns sessions with their feed items nested, most recent first
 app.get('/pantheon/sessions', async (req, res) => {
   try {
-    let query = supabase.from('pantheon_sessions').select('*').order('created_at', { ascending: false }).limit(20);
+    const limit  = Math.min(parseInt(req.query.limit)  || 8, 50);
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+    let query = supabase.from('pantheon_sessions').select('*').order('created_at', { ascending: false }).range(offset, offset + limit - 1);
     if (req.query.topic && req.query.topic !== 'All') query = query.eq('topic', req.query.topic);
     const { data: sessions, error } = await query;
     if (error) throw error;

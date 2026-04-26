@@ -409,6 +409,36 @@
       text-transform: uppercase;
     }
 
+    /* ── Infinite scroll ── */
+    #top-spacer, #bottom-spacer {
+      pointer-events: none;
+    }
+
+    #top-sentinel, #bottom-sentinel {
+      height: 1px;
+    }
+
+    .load-more {
+      text-align: center;
+      padding: 24px;
+      color: var(--muted);
+      font-size: 0.6rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    .load-more.hidden { display: none; }
+
+    .load-more::after {
+      content: '';
+      display: inline-block;
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: #333;
+      margin-left: 8px;
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+
     ::-webkit-scrollbar { width: 3px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #1a1a1a; }
@@ -454,12 +484,16 @@
   <button class="search-clear hidden" id="search-clear" onclick="clearSearch()">Clear</button>
 </div>
 
+<div id="top-sentinel"></div>
+<div id="top-spacer" style="height:0"></div>
 <div class="feed" id="feed">
-  <div class="empty-state" id="empty">Loading the feed...</div>
+  <div class="empty-state">Loading the feed...</div>
 </div>
+<div id="load-more" class="load-more hidden">Loading sessions</div>
+<div id="bottom-sentinel"></div>
 
 <script>
-  const SUPABASE_URL = '%%SUPABASE_URL%%';
+  const SUPABASE_URL      = '%%SUPABASE_URL%%';
   const SUPABASE_ANON_KEY = '%%SUPABASE_ANON_KEY%%';
 
   const PERSONA_CLASS = {
@@ -469,50 +503,259 @@
     Mira: 'mira', Aldun: 'aldun'
   };
 
-  let sessions = [];
-  let activeTopic = 'All';
-  let searchKeyword = '';
-  let dateFrom = '';
-  let dateTo = '';
+  // ── Pagination / windowing state ──────────────────────────
+  const PAGE_SIZE = 8;   // sessions fetched per request
+  const MAX_DOM   = 24;  // max sessions kept in DOM at once
 
-  async function apiFetch(path) {
-    const res = await fetch(path);
+  let allSessions  = [];   // full client-side cache of fetched sessions
+  let hasMore      = true; // server has more pages
+  let isLoading    = false;
+  let windowStart  = 0;    // index in allSessions of first DOM session
+  let windowEnd    = 0;    // exclusive end index
+  let topSpacerPx  = 0;    // height (px) of sessions removed above windowStart
+
+  // ── Filter / search state ─────────────────────────────────
+  let activeTopic   = 'All';
+  let searchKeyword = '';
+  let dateFrom      = '';
+  let dateTo        = '';
+
+  // ── Observers ─────────────────────────────────────────────
+  function setupObservers() {
+    const opts = { rootMargin: '400px', threshold: 0 };
+
+    new IntersectionObserver(([e]) => {
+      if (e.isIntersecting && windowStart > 0 && !isLoading) extendUp();
+    }, opts).observe(document.getElementById('top-sentinel'));
+
+    new IntersectionObserver(([e]) => {
+      if (e.isIntersecting && !isLoading) extendDown();
+    }, opts).observe(document.getElementById('bottom-sentinel'));
+  }
+
+  // ── Data fetching ─────────────────────────────────────────
+  async function fetchPage(offset) {
+    const p = new URLSearchParams({ limit: PAGE_SIZE, offset });
+    if (activeTopic !== 'All') p.set('topic', activeTopic);
+    const res = await fetch(`/pantheon/sessions?${p}`);
     if (!res.ok) throw new Error(`API ${res.status}`);
     return res.json();
   }
 
-  async function loadSessionCount() {
+  // ── Extend downward ───────────────────────────────────────
+  async function extendDown() {
+    if (isLoading) return;
+    isLoading = true;
     try {
-      const { count } = await apiFetch('/pantheon/session-count');
-      const n = count || 0;
-      document.getElementById('session-counter').textContent =
-        `${n} ${n === 1 ? 'session' : 'sessions'} recorded. Thirteen voices. The feed does not stop.`;
-    } catch {}
+      // Use cache first, fetch from server if exhausted
+      if (windowEnd < allSessions.length) {
+        windowEnd = Math.min(allSessions.length, windowEnd + PAGE_SIZE);
+      } else if (hasMore) {
+        showLoadMore(true);
+        const page = await fetchPage(allSessions.length);
+        showLoadMore(false);
+        if (!page.length) { hasMore = false; }
+        else {
+          allSessions.push(...page);
+          if (page.length < PAGE_SIZE) hasMore = false;
+          windowEnd = allSessions.length;
+        }
+      } else {
+        return;
+      }
+
+      // Prune top if window exceeds MAX_DOM
+      const excess = (windowEnd - windowStart) - MAX_DOM;
+      if (excess > 0) {
+        pruneTopBeforeRender(excess);
+      }
+      renderWindowDOM();
+    } catch (err) {
+      console.error('[Pantheon]', err);
+      showLoadMore(false);
+    } finally {
+      isLoading = false;
+    }
   }
 
-  async function loadSessions() {
-    const path = activeTopic === 'All'
-      ? '/pantheon/sessions'
-      : `/pantheon/sessions?topic=${encodeURIComponent(activeTopic)}`;
-    const data = await apiFetch(path);
-    sessions = data || [];
-    renderSessions();
+  // Measure and absorb pruned sessions into spacer BEFORE re-render,
+  // so page height stays constant and scrollY doesn't jump.
+  function pruneTopBeforeRender(count) {
+    const feedEl = document.getElementById('feed');
+    let pruneH = 0;
+    for (let i = 0; i < count; i++) {
+      const idx = windowStart + i;
+      const sel = feedEl.querySelector(`[data-si="${idx}"]`);
+      const div = feedEl.querySelector(`[data-da="${idx}"]`);
+      if (sel) pruneH += outerH(sel);
+      if (div) pruneH += outerH(div);
+    }
+    topSpacerPx += pruneH;
+    document.getElementById('top-spacer').style.height = topSpacerPx + 'px';
+    windowStart += count;
+    // renderWindowDOM() is called by caller
   }
 
+  // ── Extend upward (restore from cache) ───────────────────
+  function extendUp() {
+    if (windowStart === 0 || isLoading) return;
+    isLoading = true;
+
+    const newStart = Math.max(0, windowStart - PAGE_SIZE);
+    windowStart = newStart;
+    // Trim bottom to keep DOM within MAX_DOM
+    if ((windowEnd - windowStart) > MAX_DOM) windowEnd = windowStart + MAX_DOM;
+
+    const prevScrollY = window.scrollY;
+    const prevHeight  = document.body.scrollHeight;
+
+    renderWindowDOM();
+
+    // Sessions were added above viewport — compensate spacer and scroll
+    const gained = document.body.scrollHeight - prevHeight;
+    if (gained > 0) {
+      topSpacerPx = Math.max(0, topSpacerPx - gained);
+      document.getElementById('top-spacer').style.height = topSpacerPx + 'px';
+      window.scrollTo(0, prevScrollY + gained);
+    }
+
+    isLoading = false;
+  }
+
+  // ── Render the current window ─────────────────────────────
+  function renderWindowDOM() {
+    const feedEl = document.getElementById('feed');
+    feedEl.innerHTML = '';
+
+    if (!allSessions.length) {
+      feedEl.innerHTML = '<div class="empty-state">The chamber is silent. The feed will begin shortly.</div>';
+      return;
+    }
+
+    const visible = getVisibleSessions();
+    updateSearchCount(visible.length);
+
+    if (!visible.length) {
+      feedEl.innerHTML = '<div class="empty-state">No sessions match your search.</div>';
+      return;
+    }
+
+    for (let i = 0; i < visible.length; i++) {
+      const { session, globalIndex } = visible[i];
+      feedEl.appendChild(buildSessionEl(session, globalIndex));
+      if (i < visible.length - 1) {
+        const hr = document.createElement('hr');
+        hr.className = 'session-divider';
+        hr.dataset.da = globalIndex; // divider-after marker
+        feedEl.appendChild(hr);
+      }
+    }
+  }
+
+  function getVisibleSessions() {
+    const slice = allSessions.slice(windowStart, windowEnd);
+    if (!searchKeyword && !dateFrom && !dateTo) {
+      return slice.map((s, i) => ({ session: s, globalIndex: windowStart + i }));
+    }
+    return slice
+      .map((s, i) => ({ session: s, globalIndex: windowStart + i }))
+      .filter(({ session }) => sessionMatchesSearch(session));
+  }
+
+  // ── Build a single session element ───────────────────────
+  function buildSessionEl(session, globalIndex) {
+    const items      = session.items || [];
+    const thothClose = items.find(i => i.pantheon_personas?.name === 'Thoth');
+    const voiceItems = items.filter(i => i.pantheon_personas?.name !== 'Thoth');
+    const visible    = voiceItems.slice(0, 4);
+    const overflow   = voiceItems.slice(4);
+    const hasClose   = !!thothClose;
+
+    const visibleHtml = visible.map((item, i) => {
+      const isLast = i === visible.length - 1 && overflow.length === 0 && !hasClose;
+      return renderThreadItem(item, isLast);
+    }).join('');
+
+    let overflowHtml = '';
+    if (overflow.length > 0) {
+      const oHtml = overflow.map((item, i) =>
+        renderThreadItem(item, i === overflow.length - 1 && !hasClose)
+      ).join('');
+      const label = `the chamber continues — ${overflow.length} more ${overflow.length === 1 ? 'voice' : 'voices'}`;
+      overflowHtml = `
+        <button class="thread-expand" onclick="toggleExpand(this)" data-count="${overflow.length}">
+          <span class="expand-label">${esc(label)}</span>
+        </button>
+        <div class="thread-overflow">${oHtml}</div>`;
+    }
+
+    let closeHtml = '';
+    if (thothClose) {
+      closeHtml = `
+        <div class="thoth-close-divider"></div>
+        <div class="thoth-close-content">${esc(thothClose.content)}</div>
+        <div class="thoth-close-meta">${fmt(thothClose.created_at)}</div>`;
+    }
+
+    let sourceHtml = '';
+    if (session.trigger_type === 'news' && session.trigger_source_url) {
+      sourceHtml = `<div class="session-source"><a href="${esc(session.trigger_source_url)}" target="_blank" rel="noopener">${esc(session.trigger_content || '')}</a></div>`;
+    } else if (session.trigger_content) {
+      sourceHtml = `<div class="session-source">${esc(session.trigger_content)}</div>`;
+    }
+
+    const typeLabel = session.trigger_type === 'historical' ? 'Historical · ' : '';
+    const topicTag  = session.topic ? `<span class="session-topic">${esc(session.topic)}</span>` : '';
+
+    const el = document.createElement('div');
+    el.className = 'session';
+    el.dataset.id = session.id;
+    el.dataset.si = globalIndex; // session-index marker for height measurement
+    el.innerHTML = `
+      <div class="session-meta">${topicTag}${topicTag ? ' · ' : ''}${esc(typeLabel)}${fmt(session.created_at)}</div>
+      ${sourceHtml}
+      <div class="thoth-open">
+        <div class="thoth-label">Thoth — The Record</div>
+        ${session.thoth_frame    ? `<div class="thoth-frame">${esc(session.thoth_frame)}</div>` : ''}
+        ${session.thoth_question ? `<div class="thoth-question">${esc(session.thoth_question)}</div>` : ''}
+      </div>
+      <div class="thread">
+        ${visibleHtml}
+        ${overflowHtml}
+      </div>
+      ${closeHtml}`;
+    return el;
+  }
+
+  // ── Reset (topic change or realtime insert) ───────────────
+  async function resetFeed() {
+    allSessions  = [];
+    hasMore      = true;
+    isLoading    = false;
+    windowStart  = 0;
+    windowEnd    = 0;
+    topSpacerPx  = 0;
+    document.getElementById('top-spacer').style.height = '0';
+    document.getElementById('feed').innerHTML = '<div class="empty-state">Loading...</div>';
+    await extendDown();
+  }
+
+  // ── Filter bar ────────────────────────────────────────────
   function setFilter(btn) {
     document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     activeTopic = btn.dataset.topic;
-    loadSessions();
+    resetFeed();
   }
 
+  // ── Search ────────────────────────────────────────────────
   function onSearch() {
     searchKeyword = document.getElementById('search-input').value.trim().toLowerCase();
-    dateFrom = document.getElementById('date-from').value;
-    dateTo   = document.getElementById('date-to').value;
-    const hasFilter = searchKeyword || dateFrom || dateTo;
-    document.getElementById('search-clear').classList.toggle('hidden', !hasFilter);
-    renderSessions();
+    dateFrom      = document.getElementById('date-from').value;
+    dateTo        = document.getElementById('date-to').value;
+    const has = searchKeyword || dateFrom || dateTo;
+    document.getElementById('search-clear').classList.toggle('hidden', !has);
+    renderWindowDOM();
   }
 
   function clearSearch() {
@@ -520,11 +763,11 @@
     document.getElementById('date-from').value = '';
     document.getElementById('date-to').value = '';
     searchKeyword = '';
-    dateFrom = '';
-    dateTo = '';
+    dateFrom      = '';
+    dateTo        = '';
     document.getElementById('search-clear').classList.add('hidden');
     document.getElementById('search-count').textContent = '';
-    renderSessions();
+    renderWindowDOM();
   }
 
   function sessionMatchesSearch(session) {
@@ -540,22 +783,30 @@
     }
     if (!searchKeyword) return true;
     const haystack = [
-      session.thoth_frame || '',
-      session.thoth_question || '',
+      session.thoth_frame     || '',
+      session.thoth_question  || '',
       session.trigger_content || '',
-      session.topic || '',
+      session.topic           || '',
       ...(session.items || []).map(i => i.content || '')
     ].join(' ').toLowerCase();
     return haystack.includes(searchKeyword);
   }
 
-  function renderThreadItem(item, isLast) {
-    const persona = item.pantheon_personas;
-    const name  = persona?.name || 'Unknown';
-    const cls   = PERSONA_CLASS[name] || 'fen';
-    const seat  = persona?.seat || '';
-    const hasReply = !!item.in_response_to;
+  function updateSearchCount(visibleCount) {
+    const countEl = document.getElementById('search-count');
+    if (!searchKeyword && !dateFrom && !dateTo) { countEl.textContent = ''; return; }
+    const matched = allSessions.filter(sessionMatchesSearch).length;
+    const suffix  = hasMore ? '+' : '';
+    countEl.textContent = `${matched}${suffix} ${matched === 1 ? 'session' : 'sessions'}`;
+  }
 
+  // ── Thread item ───────────────────────────────────────────
+  function renderThreadItem(item, isLast) {
+    const persona  = item.pantheon_personas;
+    const name     = persona?.name || 'Unknown';
+    const cls      = PERSONA_CLASS[name] || 'fen';
+    const seat     = persona?.seat || '';
+    const hasReply = !!item.in_response_to;
     return `<div class="thread-item" data-id="${item.id}">
       <div class="thread-rail">
         <div class="thread-dot"></div>
@@ -572,120 +823,33 @@
     </div>`;
   }
 
-  function renderSessions() {
-    const feed  = document.getElementById('feed');
-    const empty = document.getElementById('empty');
-    if (empty) empty.remove();
-
-    if (!sessions.length) {
-      feed.innerHTML = '<div class="empty-state">The chamber is silent. The feed will begin shortly.</div>';
-      return;
-    }
-
-    const filtered = (searchKeyword || dateFrom || dateTo)
-      ? sessions.filter(sessionMatchesSearch)
-      : sessions;
-
-    const countEl = document.getElementById('search-count');
-    if (searchKeyword || dateFrom || dateTo) {
-      countEl.textContent = `${filtered.length} ${filtered.length === 1 ? 'session' : 'sessions'}`;
-    } else {
-      countEl.textContent = '';
-    }
-
-    feed.innerHTML = '';
-
-    if (!filtered.length) {
-      feed.innerHTML = '<div class="empty-state">No sessions match.</div>';
-      return;
-    }
-
-    for (let s = 0; s < filtered.length; s++) {
-      const session = filtered[s];
-      const items = session.items || [];
-
-      // Split Thoth's closing entry from the 13 voices
-      const thothClose = items.find(i => i.pantheon_personas?.name === 'Thoth');
-      const voiceItems = items.filter(i => i.pantheon_personas?.name !== 'Thoth');
-
-      const visible  = voiceItems.slice(0, 4);
-      const overflow = voiceItems.slice(4);
-      const hasClose = !!thothClose;
-
-      // Visible voices (always shown)
-      const visibleHtml = visible.map((item, i) => {
-        const isLast = i === visible.length - 1 && overflow.length === 0 && !hasClose;
-        return renderThreadItem(item, isLast);
-      }).join('');
-
-      // Overflow voices (hidden on mobile until expanded)
-      let overflowHtml = '';
-      if (overflow.length > 0) {
-        const oHtml = overflow.map((item, i) => {
-          const isLast = i === overflow.length - 1 && !hasClose;
-          return renderThreadItem(item, isLast);
-        }).join('');
-        const label = `the chamber continues — ${overflow.length} more ${overflow.length === 1 ? 'voice' : 'voices'}`;
-        overflowHtml = `
-          <button class="thread-expand" onclick="toggleExpand(this)" data-count="${overflow.length}">
-            <span class="expand-label">${esc(label)}</span>
-          </button>
-          <div class="thread-overflow">${oHtml}</div>`;
-      }
-
-      // Thoth close
-      let closeHtml = '';
-      if (thothClose) {
-        closeHtml = `
-          <div class="thoth-close-divider"></div>
-          <div class="thoth-close-content">${esc(thothClose.content)}</div>
-          <div class="thoth-close-meta">${fmt(thothClose.created_at)}</div>`;
-      }
-
-      // Source line
-      let sourceHtml = '';
-      if (session.trigger_type === 'news' && session.trigger_source_url) {
-        sourceHtml = `<div class="session-source"><a href="${esc(session.trigger_source_url)}" target="_blank" rel="noopener">${esc(session.trigger_content || '')}</a></div>`;
-      } else if (session.trigger_content) {
-        sourceHtml = `<div class="session-source">${esc(session.trigger_content)}</div>`;
-      }
-
-      const typeLabel = session.trigger_type === 'historical' ? 'Historical · ' : '';
-      const topicTag = session.topic ? `<span class="session-topic">${esc(session.topic)}</span>` : '';
-      const el = document.createElement('div');
-      el.className = 'session';
-      el.dataset.id = session.id;
-      el.innerHTML = `
-        <div class="session-meta">${topicTag}${topicTag ? ' · ' : ''}${esc(typeLabel)}${fmt(session.created_at)}</div>
-        ${sourceHtml}
-        <div class="thoth-open">
-          <div class="thoth-label">Thoth — The Record</div>
-          ${session.thoth_frame   ? `<div class="thoth-frame">${esc(session.thoth_frame)}</div>` : ''}
-          ${session.thoth_question ? `<div class="thoth-question">${esc(session.thoth_question)}</div>` : ''}
-        </div>
-        <div class="thread">
-          ${visibleHtml}
-          ${overflowHtml}
-        </div>
-        ${closeHtml}`;
-
-      feed.appendChild(el);
-
-      if (s < filtered.length - 1) {
-        const hr = document.createElement('hr');
-        hr.className = 'session-divider';
-        feed.appendChild(hr);
-      }
-    }
-  }
-
   function toggleExpand(btn) {
     const overflow = btn.nextElementSibling;
-    const isOpen = overflow.classList.toggle('open');
-    const count = btn.dataset.count;
+    const isOpen   = overflow.classList.toggle('open');
+    const count    = btn.dataset.count;
     btn.querySelector('.expand-label').textContent = isOpen
       ? 'collapse the chamber'
       : `the chamber continues — ${count} more ${count === '1' ? 'voice' : 'voices'}`;
+  }
+
+  // ── Utilities ─────────────────────────────────────────────
+  function outerH(el) {
+    const s = window.getComputedStyle(el);
+    return el.offsetHeight + parseFloat(s.marginTop) + parseFloat(s.marginBottom);
+  }
+
+  function showLoadMore(show) {
+    document.getElementById('load-more').classList.toggle('hidden', !show);
+  }
+
+  async function loadSessionCount() {
+    try {
+      const res = await fetch('/pantheon/session-count');
+      const { count } = await res.json();
+      const n = count || 0;
+      document.getElementById('session-counter').textContent =
+        `${n} ${n === 1 ? 'session' : 'sessions'} recorded. Thirteen voices. The feed does not stop.`;
+    } catch {}
   }
 
   function subscribeRealtime() {
@@ -707,7 +871,7 @@
         if (msg.event === 'INSERT' && msg.payload?.record) {
           document.getElementById('pulse').style.background = '#aaa';
           setTimeout(() => { document.getElementById('pulse').style.background = '#555'; }, 1200);
-          await loadSessions();
+          await resetFeed();
           await loadSessionCount();
         }
       } catch {}
@@ -717,7 +881,9 @@
 
   function fmt(ts) {
     if (!ts) return '';
-    return new Date(ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+    return new Date(ts).toLocaleString('en-US', {
+      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
+    });
   }
 
   function esc(str) {
@@ -727,7 +893,8 @@
 
   async function init() {
     try {
-      await Promise.all([loadSessions(), loadSessionCount()]);
+      setupObservers();
+      await Promise.all([extendDown(), loadSessionCount()]);
       document.getElementById('live-label').textContent = 'The feed is live.';
       subscribeRealtime();
     } catch (err) {
