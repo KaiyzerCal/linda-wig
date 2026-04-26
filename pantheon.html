@@ -283,6 +283,49 @@
       padding-left: 32px;
     }
 
+    /* ── Topic filter bar ── */
+    .filter-bar {
+      padding: 0 32px;
+      border-bottom: 1px solid #0f0f0f;
+      display: flex;
+      gap: 0;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .filter-bar::-webkit-scrollbar { display: none; }
+
+    .filter-btn {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: #2e2e2e;
+      font-family: inherit;
+      font-size: 0.58rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      padding: 12px 14px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: color 0.12s, border-color 0.12s;
+      flex-shrink: 0;
+    }
+
+    .filter-btn:hover { color: #666; }
+
+    .filter-btn.active {
+      color: var(--text);
+      border-bottom-color: #333;
+    }
+
+    .session-topic {
+      display: inline-block;
+      font-size: 0.54rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: #2a2a2a;
+      margin-bottom: 10px;
+    }
+
     /* ── Session divider ── */
     .session-divider {
       border: none;
@@ -322,6 +365,20 @@
 
 <div class="session-counter" id="session-counter">— sessions recorded. Thirteen voices. The feed does not stop.</div>
 
+<div class="filter-bar" id="filter-bar">
+  <button class="filter-btn active" data-topic="All" onclick="setFilter(this)">All</button>
+  <button class="filter-btn" data-topic="Politics" onclick="setFilter(this)">Politics</button>
+  <button class="filter-btn" data-topic="Economy" onclick="setFilter(this)">Economy</button>
+  <button class="filter-btn" data-topic="War &amp; Conflict" onclick="setFilter(this)">War &amp; Conflict</button>
+  <button class="filter-btn" data-topic="Technology" onclick="setFilter(this)">Technology</button>
+  <button class="filter-btn" data-topic="Climate" onclick="setFilter(this)">Climate</button>
+  <button class="filter-btn" data-topic="Health" onclick="setFilter(this)">Health</button>
+  <button class="filter-btn" data-topic="Culture" onclick="setFilter(this)">Culture</button>
+  <button class="filter-btn" data-topic="Justice" onclick="setFilter(this)">Justice</button>
+  <button class="filter-btn" data-topic="Science" onclick="setFilter(this)">Science</button>
+  <button class="filter-btn" data-topic="History" onclick="setFilter(this)">History</button>
+</div>
+
 <div class="feed" id="feed">
   <div class="empty-state" id="empty">Loading the feed...</div>
 </div>
@@ -338,6 +395,7 @@
   };
 
   let sessions = [];
+  let activeTopic = 'All';
 
   async function apiFetch(path) {
     const res = await fetch(path);
@@ -355,9 +413,19 @@
   }
 
   async function loadSessions() {
-    const data = await apiFetch('/pantheon/sessions');
+    const path = activeTopic === 'All'
+      ? '/pantheon/sessions'
+      : `/pantheon/sessions?topic=${encodeURIComponent(activeTopic)}`;
+    const data = await apiFetch(path);
     sessions = data || [];
     renderSessions();
+  }
+
+  function setFilter(btn) {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeTopic = btn.dataset.topic;
+    loadSessions();
   }
 
   function renderThreadItem(item, isLast) {
@@ -446,11 +514,12 @@
       }
 
       const typeLabel = session.trigger_type === 'historical' ? 'Historical · ' : '';
+      const topicTag = session.topic ? `<span class="session-topic">${esc(session.topic)}</span>` : '';
       const el = document.createElement('div');
       el.className = 'session';
       el.dataset.id = session.id;
       el.innerHTML = `
-        <div class="session-meta">${esc(typeLabel)}${fmt(session.created_at)}</div>
+        <div class="session-meta">${topicTag}${topicTag ? ' · ' : ''}${esc(typeLabel)}${fmt(session.created_at)}</div>
         ${sourceHtml}
         <div class="thoth-open">
           <div class="thoth-label">Thoth — The Record</div>

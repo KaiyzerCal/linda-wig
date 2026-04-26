@@ -673,21 +673,24 @@ async function runPantheonSession(personas, triggerType, headline, sourceUrl) {
 
   // Step 1 — Thoth opens
   let thothOpenPrompt, triggerContent;
+  const TOPICS = 'Politics, Economy, War & Conflict, Technology, Climate, Health, Culture, Justice, Science';
   if (triggerType === 'news') {
     triggerContent = headline;
-    thothOpenPrompt = `A new event has entered the record. Frame it in two sentences without interpretation. Then ask the one question that most precisely opens it. Respond in this exact format — FRAME: [your frame] QUESTION: [your question]\n\nThe event: ${headline}`;
+    thothOpenPrompt = `A new event has entered the record. Frame it in two sentences without interpretation. Then ask the one question that most precisely opens it. Classify it under exactly one topic. Respond in this exact format — TOPIC: [one of: ${TOPICS}] FRAME: [your frame] QUESTION: [your question]\n\nThe event: ${headline}`;
   } else {
     thothOpenPrompt = `The news cycle is quiet. Reach into the historical record. Find the event from human history that most precisely rhymes with the current state of the world. Name the event. Name the date. Name the civilization. Name the specific structural rhyme with the present moment in one sentence. Then ask the question the present moment most needs to hear from it. Respond in this exact format — EVENT: [historical event, date, civilization] FRAME: [specific structural rhyme with the present moment] QUESTION: [the question]`;
     triggerContent = '';
   }
 
-  const thothOpenRaw = await callPersona(thoth.system_prompt, thothOpenPrompt, 350);
+  const thothOpenRaw = await callPersona(thoth.system_prompt, thothOpenPrompt, 380);
 
-  let frame, question;
+  let frame, question, topic;
   if (triggerType === 'news') {
+    topic    = (thothOpenRaw.match(/TOPIC:\s*([^\n]+)/i)?.[1] || '').trim();
     frame    = (thothOpenRaw.match(/FRAME:\s*([\s\S]*?)(?=QUESTION:|$)/i)?.[1] || thothOpenRaw).trim();
     question = (thothOpenRaw.match(/QUESTION:\s*([\s\S]*?)$/i)?.[1] || '').trim();
   } else {
+    topic    = 'History';
     triggerContent = (thothOpenRaw.match(/EVENT:\s*([\s\S]*?)(?=FRAME:|$)/i)?.[1] || '').trim();
     frame    = (thothOpenRaw.match(/FRAME:\s*([\s\S]*?)(?=QUESTION:|$)/i)?.[1] || '').trim();
     question = (thothOpenRaw.match(/QUESTION:\s*([\s\S]*?)$/i)?.[1] || '').trim();
@@ -695,7 +698,7 @@ async function runPantheonSession(personas, triggerType, headline, sourceUrl) {
 
   const { data: session, error: sessionErr } = await supabase
     .from('pantheon_sessions')
-    .insert([{ trigger_type: triggerType, trigger_content: triggerContent, trigger_source_url: sourceUrl || null, thoth_frame: frame, thoth_question: question }])
+    .insert([{ trigger_type: triggerType, trigger_content: triggerContent, trigger_source_url: sourceUrl || null, thoth_frame: frame, thoth_question: question, topic: topic || null }])
     .select().single();
 
   if (sessionErr) throw new Error('Session insert failed: ' + sessionErr.message);
@@ -770,11 +773,9 @@ app.get('/pantheon/health', (req, res) => {
 // Sessions — returns sessions with their feed items nested, most recent first
 app.get('/pantheon/sessions', async (req, res) => {
   try {
-    const { data: sessions, error } = await supabase
-      .from('pantheon_sessions')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(20);
+    let query = supabase.from('pantheon_sessions').select('*').order('created_at', { ascending: false }).limit(20);
+    if (req.query.topic && req.query.topic !== 'All') query = query.eq('topic', req.query.topic);
+    const { data: sessions, error } = await query;
     if (error) throw error;
     if (!sessions?.length) return res.json([]);
 
