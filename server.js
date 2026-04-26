@@ -6,6 +6,7 @@ const { createClient } = require('@supabase/supabase-js');
 const path = require('path');
 const fs = require('fs');
 const Stripe = require('stripe');
+const nodemailer = require('nodemailer');
 
 const app = express();
 app.use(cors());
@@ -13,8 +14,130 @@ app.use(cors());
 // Raw body needed for Stripe webhook signature verification — must come before express.json()
 app.use('/pantheon/webhook', express.raw({ type: 'application/json' }));
 
-app.use(express.json());
+app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname)));
+
+const ZAPIER_SOCIAL_WEBHOOK = process.env.ZAPIER_SOCIAL_WEBHOOK || '';
+const SLACK_WEBHOOK_URL     = process.env.SLACK_WEBHOOK_URL     || '';
+
+const mailTransporter = (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD)
+  ? nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD }
+    })
+  : null;
+
+async function fireEmail(to, subject, body) {
+  if (!mailTransporter) throw new Error('GMAIL_USER / GMAIL_APP_PASSWORD not configured');
+  await mailTransporter.sendMail({
+    from: `Linda — WIG <${process.env.GMAIL_USER}>`,
+    to, subject, text: body
+  });
+  return true;
+}
+
+async function fireSocial(content, platform) {
+  if (!ZAPIER_SOCIAL_WEBHOOK) throw new Error('ZAPIER_SOCIAL_WEBHOOK not configured');
+  const res = await fetch(ZAPIER_SOCIAL_WEBHOOK, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, platform: platform || 'all' })
+  });
+  if (!res.ok) throw new Error(`Zapier responded ${res.status}`);
+  return true;
+}
+
+function parseEmailAction(text) {
+  const match = text.match(/\[SEND_EMAIL\]([\s\S]*?)\[\/SEND_EMAIL\]/i);
+  if (!match) return null;
+  const block = match[1];
+  const to      = (block.match(/^To:\s*(.+)$/mi)?.[1] || '').trim();
+  const subject = (block.match(/^Subject:\s*(.+)$/mi)?.[1] || '').trim();
+  const bodyMatch = block.match(/^Body:\s*([\s\S]*)$/mi);
+  const body    = bodyMatch ? bodyMatch[1].trim() : '';
+  if (!to || !subject) return null;
+  return { to, subject, body };
+}
+
+function parseSocialAction(text) {
+  const match = text.match(/\[SEND_POST\]([\s\S]*?)\[\/SEND_POST\]/i);
+  if (!match) return null;
+  const block    = match[1];
+  const platform = (block.match(/^Platform:\s*(.+)$/mi)?.[1] || 'all').trim();
+  const contentMatch = block.match(/^Content:\s*([\s\S]*)$/mi);
+  const content  = contentMatch ? contentMatch[1].trim() : '';
+  if (!content) return null;
+  return { content, platform };
+}
+
+async function fireOutreach(to, subject, body, contact_name, notes) {
+  if (!mailTransporter) throw new Error('GMAIL_USER / GMAIL_APP_PASSWORD not configured');
+  const notesSuffix = notes ? `\n\n---\nOutreach note: ${notes}` : '';
+  await mailTransporter.sendMail({
+    from: `Linda — WIG <${process.env.GMAIL_USER}>`,
+    to, subject, text: body + notesSuffix
+  });
+  return true;
+}
+
+function parseOutreachAction(text) {
+  const match = text.match(/\[SEND_OUTREACH\]([\s\S]*?)\[\/SEND_OUTREACH\]/i);
+  if (!match) return null;
+  const block = match[1];
+  const to           = (block.match(/^To:\s*(.+)$/mi)?.[1] || '').trim();
+  const subject      = (block.match(/^Subject:\s*(.+)$/mi)?.[1] || '').trim();
+  const contact_name = (block.match(/^Name:\s*(.+)$/mi)?.[1] || '').trim();
+  const notes        = (block.match(/^Notes:\s*(.+)$/mi)?.[1] || '').trim();
+  const bodyMatch    = block.match(/^Body:\s*([\s\S]*)$/mi);
+  const body         = bodyMatch ? bodyMatch[1].trim() : '';
+  if (!to || !subject) return null;
+  return { to, subject, body, contact_name, notes };
+}
+
+async function fireSlack(message) {
+  if (!SLACK_WEBHOOK_URL) return;
+  await fetch(SLACK_WEBHOOK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: message })
+  }).catch(e => console.error('[Slack send error]', e.message));
+}
+
+function parseSlackAction(text) {
+  const match = text.match(/\[SEND_SLACK\]([\s\S]*?)\[\/SEND_SLACK\]/i);
+  if (!match) return null;
+  const message = match[1].trim();
+  return message ? { message } : null;
+}
+
+// Build user content block for Claude — handles text, images, PDFs, and plain text files
+function buildUserContent(message, attachment) {
+  if (!attachment) return message;
+  const { data, mimeType, name } = attachment;
+
+  if (mimeType.startsWith('image/')) {
+    const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (!allowed.includes(mimeType)) return `[Unsupported image format: ${name}]\n\n${message}`;
+    return [
+      { type: 'image', source: { type: 'base64', media_type: mimeType, data } },
+      { type: 'text', text: message || 'Analyze this image.' }
+    ];
+  }
+
+  if (mimeType === 'application/pdf') {
+    return [
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data } },
+      { type: 'text', text: message || 'Analyze this document.' }
+    ];
+  }
+
+  if (mimeType.startsWith('text/') || mimeType === 'application/json') {
+    const text = Buffer.from(data, 'base64').toString('utf8');
+    return `[File: ${name}]\n\n${text.slice(0, 50000)}\n\n${message || 'Analyze this file.'}`;
+  }
+
+  return `[File attached: ${name} — type ${mimeType} cannot be processed directly.]\n\n${message}`;
+}
 
 const stripe = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
@@ -40,7 +163,53 @@ Primary asset: The Inmate Traveler's Guide by Bishop Christopher Watkins. Publis
 
 Linda's mandate is not just to sell a book — it is to run the operational infrastructure of an investment group that started with one.
 
-You are not an assistant. You are Chief of Staff. Act accordingly.`;
+You are not an assistant. You are Chief of Staff. Act accordingly.
+
+EMAIL CAPABILITY:
+You can send real emails through Gmail. When a principal asks you to send an email, draft it and append this block at the very end of your response — nothing after it:
+
+[SEND_EMAIL]
+To: recipient@example.com
+Subject: Subject line here
+Body:
+Email body goes here. Can be multiple lines.
+[/SEND_EMAIL]
+
+The system will strip this block, send the email, and confirm. Do not announce that you are appending the block. Do not say "I'll send this now." Just include it. If you need the recipient's email and don't have it, ask before drafting.
+
+SOCIAL CAPABILITY:
+You can post to social media. When a principal asks you to post something, write the post and append this block at the very end of your response — nothing after it:
+
+[SEND_POST]
+Platform: twitter
+Content:
+Post text goes here.
+[/SEND_POST]
+
+Platform can be: twitter, linkedin, instagram, or all. Keep posts platform-appropriate — Twitter under 280 characters, LinkedIn can be longer. The system will strip the block, fire the post, and confirm. Do not announce it. Just include it.
+
+OUTREACH CAPABILITY:
+You can send tracked outreach emails — these are logged separately from regular emails for campaign tracking. Use this for targeted outreach to press, podcasters, reviewers, bookstores, organizations, and any contact you are deliberately cultivating. Append this block at the very end of your response:
+
+[SEND_OUTREACH]
+To: contact@example.com
+Name: Contact's full name
+Subject: Subject line
+Notes: One line about why this contact matters or what the goal is
+Body:
+Email body here.
+[/SEND_OUTREACH]
+
+The difference between EMAIL and OUTREACH: email is operational (sending something to someone we already work with). Outreach is strategic (opening a door with someone new). Use the right one. Do not announce it. Just include it.
+
+SLACK CAPABILITY:
+You can send a direct Slack message to Bishop. Use this for urgent flags, mission updates, or anything that needs his immediate attention. Append this block at the very end of your response:
+
+[SEND_SLACK]
+Your message to Bishop here.
+[/SEND_SLACK]
+
+Use sparingly — Slack is for things that need a response, not for routine updates. Do not announce it. Just include it.`;
 
 const LOCKE_SYSTEM = `You are Locke.
 
@@ -282,8 +451,8 @@ app.get('/linda/health', (req, res) => {
 // Chat
 app.post('/linda/chat', async (req, res) => {
   try {
-    const { principal_id, message, conversation_history = [] } = req.body;
-    if (!message) return res.status(400).json({ error: 'Message required' });
+    const { principal_id, message, conversation_history = [], attachment } = req.body;
+    if (!message && !attachment) return res.status(400).json({ error: 'Message or attachment required' });
 
     let history = conversation_history;
     if (principal_id && history.length === 0) {
@@ -296,9 +465,14 @@ app.post('/linda/chat', async (req, res) => {
       if (stored?.length) history = stored;
     }
 
+    const userContent = buildUserContent(message || 'Analyze the attached file.', attachment);
+    const savedUserMessage = attachment
+      ? `[Attached: ${attachment.name}]\n\n${message || ''}`.trim()
+      : message;
+
     const messages = [
       ...history.map(h => ({ role: h.role, content: h.content })),
-      { role: 'user', content: message }
+      { role: 'user', content: userContent }
     ];
 
     const crossContext = await buildCrossContext(principal_id, 'linda');
@@ -312,17 +486,81 @@ app.post('/linda/chat', async (req, res) => {
       messages
     });
 
-    const reply = response.content[0].text;
+    const rawReply = response.content[0].text;
+
+    // Strip action blocks and fire webhooks
+    const emailAction    = parseEmailAction(rawReply);
+    const socialAction   = parseSocialAction(rawReply);
+    const outreachAction = parseOutreachAction(rawReply);
+    const slackAction    = parseSlackAction(rawReply);
+    let reply = rawReply
+      .replace(/\[SEND_EMAIL\][\s\S]*?\[\/SEND_EMAIL\]/i, '')
+      .replace(/\[SEND_POST\][\s\S]*?\[\/SEND_POST\]/i, '')
+      .replace(/\[SEND_OUTREACH\][\s\S]*?\[\/SEND_OUTREACH\]/i, '')
+      .replace(/\[SEND_SLACK\][\s\S]*?\[\/SEND_SLACK\]/i, '')
+      .trim();
+
+    let emailResult = null;
+    let socialResult = null;
+
+    if (emailAction) {
+      try {
+        await fireEmail(emailAction.to, emailAction.subject, emailAction.body);
+        emailResult = { sent: true, to: emailAction.to, subject: emailAction.subject };
+        reply += `\n\n[Email sent to ${emailAction.to} — "${emailAction.subject}"]`;
+      } catch (e) {
+        console.error('[Email send error]', e.message);
+        reply += `\n\n[Email failed: ${e.message}]`;
+        emailResult = { sent: false, error: e.message };
+      }
+    }
+
+    if (socialAction) {
+      try {
+        await fireSocial(socialAction.content, socialAction.platform);
+        socialResult = { sent: true, platform: socialAction.platform };
+        reply += `\n\n[Post sent — ${socialAction.platform}]`;
+      } catch (e) {
+        console.error('[Social send error]', e.message);
+        reply += `\n\n[Post failed: ${e.message}]`;
+        socialResult = { sent: false, error: e.message };
+      }
+    }
+
+    let outreachResult = null;
+    if (outreachAction) {
+      try {
+        await fireOutreach(outreachAction.to, outreachAction.subject, outreachAction.body, outreachAction.contact_name, outreachAction.notes);
+        outreachResult = { sent: true, to: outreachAction.to, contact_name: outreachAction.contact_name };
+        reply += `\n\n[Outreach sent to ${outreachAction.contact_name || outreachAction.to} — logged]`;
+      } catch (e) {
+        console.error('[Outreach send error]', e.message);
+        reply += `\n\n[Outreach failed: ${e.message}]`;
+        outreachResult = { sent: false, error: e.message };
+      }
+    }
 
     if (principal_id) {
       const { error: saveError } = await supabase.from('conversations').insert([
-        { principal_id, role: 'user', content: message },
+        { principal_id, role: 'user', content: savedUserMessage },
         { principal_id, role: 'assistant', content: reply }
       ]);
       if (saveError) console.error('[Supabase save error]', saveError.message);
     }
 
-    res.json({ response: reply, principal_id });
+    let slackResult = null;
+    if (slackAction) {
+      try {
+        await fireSlack(slackAction.message);
+        slackResult = { sent: true };
+        reply += `\n\n[Slack message sent to Bishop]`;
+      } catch (e) {
+        reply += `\n\n[Slack failed: ${e.message}]`;
+        slackResult = { sent: false, error: e.message };
+      }
+    }
+
+    res.json({ response: reply, principal_id, email_action: emailResult, social_action: socialResult, outreach_action: outreachResult, slack_action: slackResult });
   } catch (err) {
     console.error('Chat error:', err.message);
     res.status(500).json({ error: err.message });
@@ -353,6 +591,9 @@ app.post('/linda/missions', async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+    // Notify Bishop on Slack when a new mission is created
+    const priorityLabel = priority ? ` [${priority.toUpperCase()}]` : '';
+    fireSlack(`New mission created${priorityLabel}: ${title}${description ? '\n' + description : ''}`);
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -442,8 +683,8 @@ app.get('/locke/health', (req, res) => {
 // Locke chat
 app.post('/locke/chat', async (req, res) => {
   try {
-    const { principal_id, message, conversation_history = [] } = req.body;
-    if (!message) return res.status(400).json({ error: 'Message required' });
+    const { principal_id, message, conversation_history = [], attachment } = req.body;
+    if (!message && !attachment) return res.status(400).json({ error: 'Message or attachment required' });
 
     let history = conversation_history;
     if (principal_id && history.length === 0) {
@@ -456,9 +697,14 @@ app.post('/locke/chat', async (req, res) => {
       if (stored?.length) history = stored;
     }
 
+    const userContent = buildUserContent(message || 'Analyze the attached file.', attachment);
+    const savedUserMessage = attachment
+      ? `[Attached: ${attachment.name}]\n\n${message || ''}`.trim()
+      : message;
+
     const messages = [
       ...history.map(h => ({ role: h.role, content: h.content })),
-      { role: 'user', content: message }
+      { role: 'user', content: userContent }
     ];
 
     const crossContext = await buildCrossContext(principal_id, 'locke');
@@ -476,7 +722,7 @@ app.post('/locke/chat', async (req, res) => {
 
     if (principal_id) {
       const { error: saveError } = await supabase.from('locke_conversations').insert([
-        { principal_id, role: 'user', content: message },
+        { principal_id, role: 'user', content: savedUserMessage },
         { principal_id, role: 'assistant', content: reply }
       ]);
       if (saveError) console.error('[Locke Supabase save error]', saveError.message);

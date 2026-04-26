@@ -228,6 +228,355 @@
 
     .brief-btn:hover { color: #555; }
 
+    .gallery-btn {
+      background: transparent;
+      border: none;
+      color: #2e2e2e;
+      font-family: inherit;
+      font-size: 0.62rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      cursor: pointer;
+      padding: 5px 0;
+      flex-shrink: 0;
+      transition: color 0.15s;
+      position: relative;
+    }
+
+    .gallery-btn:hover { color: #555; }
+
+    .gallery-badge {
+      position: absolute;
+      top: 0; right: -8px;
+      background: var(--accent);
+      color: #0c0c0c;
+      font-size: 0.5rem;
+      font-family: sans-serif;
+      min-width: 14px;
+      height: 14px;
+      border-radius: 7px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 3px;
+      display: none;
+    }
+
+    .gallery-badge.visible { display: flex; }
+
+    /* Inline media in chat */
+    .inline-media { margin-bottom: 10px; }
+
+    .inline-img {
+      max-width: 320px;
+      max-height: 240px;
+      width: auto;
+      height: auto;
+      display: block;
+      border-radius: 4px;
+      border: 1px solid #1e1e1e;
+      cursor: zoom-in;
+      transition: opacity 0.15s;
+    }
+
+    .inline-img:hover { opacity: 0.85; }
+
+    .inline-video {
+      max-width: 360px;
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 4px;
+      border: 1px solid #1e1e1e;
+    }
+
+    .inline-audio {
+      width: 280px;
+      display: block;
+      filter: invert(0.85) sepia(0.1);
+    }
+
+    .inline-file {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border: 1px solid #1e1e1e;
+      border-radius: 4px;
+      cursor: default;
+    }
+
+    .file-badge {
+      font-size: 0.55rem;
+      letter-spacing: 0.1em;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      padding: 2px 5px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    .file-label {
+      font-size: 0.78rem;
+      color: #888;
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* Gallery modal */
+    .gallery-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.94);
+      z-index: 100;
+      display: none;
+      flex-direction: column;
+    }
+
+    .gallery-modal.open { display: flex; }
+
+    .gallery-header {
+      padding: 18px 28px;
+      border-bottom: 1px solid #1c1c1c;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .gallery-title {
+      font-size: 0.72rem;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: #555;
+    }
+
+    .gallery-close {
+      background: transparent;
+      border: none;
+      color: #333;
+      font-size: 1.1rem;
+      cursor: pointer;
+      padding: 4px 8px;
+      transition: color 0.15s;
+    }
+
+    .gallery-close:hover { color: #888; }
+
+    .gallery-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 28px;
+    }
+
+    .gallery-empty {
+      text-align: center;
+      padding: 80px 20px;
+      font-size: 0.75rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: #222;
+    }
+
+    .gallery-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 12px;
+    }
+
+    .gallery-item {
+      aspect-ratio: 1;
+      background: #111;
+      border: 1px solid #1e1e1e;
+      border-radius: 4px;
+      cursor: pointer;
+      overflow: hidden;
+      position: relative;
+      transition: border-color 0.15s;
+    }
+
+    .gallery-item:hover { border-color: #333; }
+
+    .gallery-item img, .gallery-item video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .gallery-item-label {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      padding: 6px 8px;
+      background: rgba(0,0,0,0.7);
+      font-size: 0.6rem;
+      letter-spacing: 0.05em;
+      color: #888;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+
+    .gallery-item:hover .gallery-item-label { opacity: 1; }
+
+    .gallery-item-icon {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .gallery-icon-badge {
+      font-size: 0.65rem;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      padding: 4px 8px;
+      border-radius: 2px;
+    }
+
+    .gallery-icon-name {
+      font-size: 0.65rem;
+      color: #444;
+      padding: 0 10px;
+      text-align: center;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
+    /* Lightbox */
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.97);
+      z-index: 200;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .lightbox.open { display: flex; }
+
+    .lightbox-close {
+      position: absolute;
+      top: 20px; right: 24px;
+      background: transparent;
+      border: none;
+      color: #333;
+      font-size: 1.4rem;
+      cursor: pointer;
+      transition: color 0.15s;
+      z-index: 201;
+    }
+
+    .lightbox-close:hover { color: #888; }
+
+    .lightbox-name {
+      position: absolute;
+      bottom: 20px;
+      font-size: 0.65rem;
+      letter-spacing: 0.12em;
+      color: #333;
+    }
+
+    .lightbox img {
+      max-width: 90vw;
+      max-height: 85vh;
+      object-fit: contain;
+      border-radius: 3px;
+    }
+
+    .lightbox video {
+      max-width: 90vw;
+      max-height: 85vh;
+    }
+
+    .lightbox audio {
+      filter: invert(0.85) sepia(0.1);
+    }
+
+    .lightbox-nav {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      background: transparent;
+      border: none;
+      color: #222;
+      font-size: 1.5rem;
+      cursor: pointer;
+      padding: 12px;
+      transition: color 0.15s;
+    }
+
+    .lightbox-nav:hover { color: #666; }
+    .lightbox-nav.prev { left: 16px; }
+    .lightbox-nav.next { right: 16px; }
+      background: transparent;
+      border: none;
+      color: #2e2e2e;
+      font-family: inherit;
+      font-size: 0.62rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      cursor: pointer;
+      padding: 7px 0;
+      flex-shrink: 0;
+      transition: color 0.15s;
+    }
+
+    .attach-btn:hover { color: #555; }
+
+    .attachment-preview {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0 4px;
+      border-top: 1px solid #1a1a1a;
+      margin-bottom: 4px;
+    }
+
+    .attachment-preview.visible { display: flex; }
+
+    .attachment-preview img {
+      width: 40px;
+      height: 40px;
+      object-fit: cover;
+      border-radius: 3px;
+      border: 1px solid #222;
+    }
+
+    .attachment-name {
+      font-size: 0.72rem;
+      color: #666;
+      letter-spacing: 0.05em;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .attachment-clear {
+      background: transparent;
+      border: none;
+      color: #333;
+      cursor: pointer;
+      font-size: 0.85rem;
+      padding: 2px 6px;
+      transition: color 0.15s;
+      flex-shrink: 0;
+    }
+
+    .attachment-clear:hover { color: #888; }
+
     ::-webkit-scrollbar { width: 3px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #1e1e1e; }
@@ -242,12 +591,38 @@
 </head>
 <body>
 
+<!-- Gallery modal -->
+<div class="gallery-modal" id="gallery-modal">
+  <div class="gallery-header">
+    <span class="gallery-title">Session Gallery</span>
+    <button class="gallery-close" onclick="closeGallery()">✕</button>
+  </div>
+  <div class="gallery-scroll">
+    <div class="gallery-empty" id="gallery-empty">No files uploaded this session.</div>
+    <div class="gallery-grid" id="gallery-grid"></div>
+  </div>
+</div>
+
+<!-- Lightbox -->
+<div class="lightbox" id="lightbox" onclick="if(event.target===this)closeLightbox()">
+  <button class="lightbox-close" onclick="closeLightbox()">✕</button>
+  <button class="lightbox-nav prev" onclick="lightboxNav(-1)">&#8249;</button>
+  <div id="lightbox-content"></div>
+  <button class="lightbox-nav next" onclick="lightboxNav(1)">&#8250;</button>
+  <div class="lightbox-name" id="lightbox-name"></div>
+</div>
+
 <header>
   <div class="brand">
     <h1 id="agent-name">LINDA</h1>
     <p id="agent-role">WIG Chief of Staff</p>
   </div>
   <div class="header-right">
+    <button class="gallery-btn" id="gallery-btn" onclick="openGallery()" title="Session gallery">
+      Gallery
+      <span class="gallery-badge" id="gallery-badge">0</span>
+    </button>
+    <div class="divider"></div>
     <div class="toggle-group">
       <span class="toggle-label">Agent</span>
       <button class="p-btn active" id="btn-linda" onclick="setAgent('linda')">Linda</button>
@@ -271,16 +646,26 @@
 <div class="status-row" id="status"></div>
 
 <div class="input-area">
-  <div class="input-inner">
-    <button class="brief-btn" id="brief-btn" onclick="requestBrief()" title="Morning brief">Brief</button>
-    <textarea
-      id="input"
-      placeholder="Speak to Linda..."
-      rows="1"
-      onkeydown="handleKey(event)"
-      oninput="autoResize(this)"
-    ></textarea>
-    <button class="send-btn" id="send-btn" onclick="sendMessage()">Send</button>
+  <div class="input-inner" style="flex-direction: column; align-items: stretch;">
+    <div class="attachment-preview" id="attachment-preview">
+      <img id="attachment-thumb" src="" alt="" style="display:none;">
+      <span class="attachment-name" id="attachment-name"></span>
+      <button class="attachment-clear" onclick="clearAttachment()" title="Remove">✕</button>
+    </div>
+    <div style="display:flex; align-items:flex-end; gap:12px;">
+      <button class="brief-btn" id="brief-btn" onclick="requestBrief()" title="Morning brief">Brief</button>
+      <button class="attach-btn" id="attach-btn" onclick="document.getElementById('file-input').click()" title="Attach file">Attach</button>
+      <input type="file" id="file-input" style="display:none;" onchange="handleFileSelect(event)" accept="image/*,.pdf,.txt,.csv,.json,.md,.html,.js,.ts,.py">
+      <textarea
+        id="input"
+        placeholder="Speak to Linda..."
+        rows="1"
+        onkeydown="handleKey(event)"
+        oninput="autoResize(this)"
+        style="flex:1;"
+      ></textarea>
+      <button class="send-btn" id="send-btn" onclick="sendMessage()">Send</button>
+    </div>
   </div>
 </div>
 
@@ -297,6 +682,9 @@
   let principal = 'calvin';
   let principalId = CALVIN_UUID;
   let conversationHistory = [];
+  let pendingAttachment = null;
+  let attachmentHistory = [];   // session gallery
+  let lightboxIndex = 0;        // current lightbox position
 
   async function init() {
     principalId = CALVIN_UUID;
@@ -313,6 +701,7 @@
   async function setAgent(a) {
     agent = a;
     conversationHistory = [];
+    clearAttachment();
     const cfg = AGENTS[a];
 
     document.documentElement.style.setProperty('--accent', cfg.accent);
@@ -353,6 +742,7 @@
     principal = p;
     principalId = p === 'bishop' ? BISHOP_UUID : CALVIN_UUID;
     conversationHistory = [];
+    clearAttachment();
 
     document.getElementById('btn-bishop').classList.toggle('active', p === 'bishop');
     document.getElementById('btn-calvin').classList.toggle('active', p === 'calvin');
@@ -364,26 +754,98 @@
     await loadHistory();
   }
 
+  async function handleFileSelect(event) {
+    const file = event.target.files[0];
+    event.target.value = '';
+    if (!file) return;
+
+    const isMedia = file.type.startsWith('video/') || file.type.startsWith('audio/');
+    const maxBytes = isMedia ? 200 * 1024 * 1024 : 10 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      setStatus(isMedia ? 'File too large — 200MB maximum for video/audio.' : 'File too large — 10MB maximum.');
+      setTimeout(() => setStatus(''), 3000);
+      return;
+    }
+
+    if (isMedia) {
+      // Use blob URL for local playback — don't send base64 to AI
+      const blobUrl = URL.createObjectURL(file);
+      pendingAttachment = { name: file.name, mimeType: file.type, data: null, dataUrl: blobUrl, mediaOnly: true };
+      attachmentHistory.push({ ...pendingAttachment, timestamp: new Date() });
+      updateGalleryBadge();
+      showAttachmentPreview(file, blobUrl);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target.result;
+        const base64 = dataUrl.split(',')[1];
+        pendingAttachment = { name: file.name, mimeType: file.type, data: base64, dataUrl };
+        attachmentHistory.push({ ...pendingAttachment, timestamp: new Date() });
+        updateGalleryBadge();
+        showAttachmentPreview(file, dataUrl);
+      };
+      reader.readAsDataURL(file);
+    }
+  }
+
+  function showAttachmentPreview(file, dataUrl) {
+    const preview = document.getElementById('attachment-preview');
+    const thumb = document.getElementById('attachment-thumb');
+    const nameEl = document.getElementById('attachment-name');
+    nameEl.textContent = file.name;
+    if (file.type.startsWith('image/')) {
+      thumb.src = dataUrl;
+      thumb.style.display = 'block';
+    } else if (file.type.startsWith('video/')) {
+      thumb.src = '';
+      thumb.style.display = 'none';
+    } else {
+      thumb.style.display = 'none';
+    }
+    preview.classList.add('visible');
+  }
+
+  function clearAttachment() {
+    pendingAttachment = null;
+    const preview = document.getElementById('attachment-preview');
+    const thumb = document.getElementById('attachment-thumb');
+    if (preview) preview.classList.remove('visible');
+    if (thumb) { thumb.src = ''; thumb.style.display = 'none'; }
+  }
+
   async function sendMessage() {
     const input = document.getElementById('input');
     const message = input.value.trim();
-    if (!message) return;
+    if (!message && !pendingAttachment) return;
 
     const btn = document.getElementById('send-btn');
     btn.disabled = true;
+
+    const attachment = pendingAttachment;
+    clearAttachment();
     input.value = '';
     autoResize(input);
 
+    const userLabel = principal === 'bishop' ? 'Bishop' : 'Calvin';
     removeEmpty();
-    appendMessage('user', message, principal === 'bishop' ? 'Bishop' : 'Calvin');
+    appendMessageWithMedia('user', message, userLabel, attachment);
     setStatus('...');
 
     const chatEndpoint = agent === 'locke' ? '/locke/chat' : '/linda/chat';
     const agentLabel = agent === 'locke' ? 'Locke' : 'Linda';
 
     try {
-      const body = { message, conversation_history: conversationHistory };
+      const body = { message: message || null, conversation_history: conversationHistory };
       if (principalId) body.principal_id = principalId;
+      // Don't send video/audio base64 to AI — send a text note instead
+      if (attachment) {
+        if (attachment.mediaOnly) {
+          const mediaNote = `[User shared a ${attachment.mimeType.split('/')[0]} file: ${attachment.name}. I cannot process ${attachment.mimeType.split('/')[0]} content directly.]`;
+          body.message = message ? `${mediaNote}\n\n${message}` : mediaNote;
+        } else {
+          body.attachment = { name: attachment.name, mimeType: attachment.mimeType, data: attachment.data };
+        }
+      }
 
       const r = await fetch(chatEndpoint, {
         method: 'POST',
@@ -393,8 +855,11 @@
       const data = await r.json();
       if (data.error) throw new Error(data.error);
 
+      const savedUserContent = attachment
+        ? `[Attached: ${attachment.name}]\n\n${message || ''}`.trim()
+        : message;
       conversationHistory.push(
-        { role: 'user', content: message },
+        { role: 'user', content: savedUserContent },
         { role: 'assistant', content: data.response }
       );
 
@@ -431,15 +896,122 @@
   }
 
   function appendMessage(type, text, label) {
+    appendMessageWithMedia(type, text, label, null);
+  }
+
+  function appendMessageWithMedia(type, text, label, attachment) {
     const chat = document.getElementById('chat');
     const div = document.createElement('div');
     div.className = `message ${type}`;
-    div.innerHTML = `
-      <div class="msg-label">${label}</div>
-      <div class="msg-text">${escapeHtml(text).replace(/\n/g, '<br>')}</div>
-    `;
+
+    let mediaHtml = '';
+    if (attachment) {
+      const { name, mimeType, dataUrl } = attachment;
+      const idx = attachmentHistory.findIndex(a => a.dataUrl === dataUrl);
+      if (mimeType.startsWith('image/')) {
+        mediaHtml = `<div class="inline-media"><img class="inline-img" src="${dataUrl}" alt="${escapeHtml(name)}" onclick="openLightboxAt(${idx})"></div>`;
+      } else if (mimeType.startsWith('video/')) {
+        mediaHtml = `<div class="inline-media"><video class="inline-video" controls><source src="${dataUrl}" type="${mimeType}"></video></div>`;
+      } else if (mimeType.startsWith('audio/')) {
+        mediaHtml = `<div class="inline-media"><audio class="inline-audio" controls><source src="${dataUrl}" type="${mimeType}"></audio></div>`;
+      } else if (mimeType === 'application/pdf') {
+        mediaHtml = `<div class="inline-media"><div class="inline-file"><span class="file-badge">PDF</span><span class="file-label">${escapeHtml(name)}</span></div></div>`;
+      } else {
+        const ext = name.split('.').pop().toUpperCase().slice(0, 4);
+        mediaHtml = `<div class="inline-media"><div class="inline-file"><span class="file-badge">${escapeHtml(ext)}</span><span class="file-label">${escapeHtml(name)}</span></div></div>`;
+      }
+    }
+
+    const textHtml = text ? `<div class="msg-text">${escapeHtml(text).replace(/\n/g, '<br>')}</div>` : '';
+    div.innerHTML = `<div class="msg-label">${label}</div>${mediaHtml}${textHtml}`;
     chat.appendChild(div);
     document.getElementById('chat-wrap').scrollTop = 99999;
+  }
+
+  // Gallery
+  function updateGalleryBadge() {
+    const badge = document.getElementById('gallery-badge');
+    const n = attachmentHistory.length;
+    badge.textContent = n;
+    badge.classList.toggle('visible', n > 0);
+  }
+
+  function openGallery() {
+    const modal = document.getElementById('gallery-modal');
+    const grid = document.getElementById('gallery-grid');
+    const empty = document.getElementById('gallery-empty');
+    grid.innerHTML = '';
+
+    if (!attachmentHistory.length) {
+      empty.style.display = '';
+      grid.style.display = 'none';
+    } else {
+      empty.style.display = 'none';
+      grid.style.display = '';
+      attachmentHistory.forEach((att, idx) => {
+        const item = document.createElement('div');
+        item.className = 'gallery-item';
+        item.onclick = () => openLightboxAt(idx);
+        if (att.mimeType.startsWith('image/')) {
+          item.innerHTML = `<img src="${att.dataUrl}" alt="${escapeHtml(att.name)}"><div class="gallery-item-label">${escapeHtml(att.name)}</div>`;
+        } else if (att.mimeType.startsWith('video/')) {
+          item.innerHTML = `<video src="${att.dataUrl}" muted></video><div class="gallery-item-label">${escapeHtml(att.name)}</div>`;
+        } else {
+          const ext = att.name.split('.').pop().toUpperCase().slice(0, 4);
+          item.innerHTML = `<div class="gallery-item-icon"><span class="gallery-icon-badge">${escapeHtml(ext)}</span><span class="gallery-icon-name">${escapeHtml(att.name)}</span></div><div class="gallery-item-label">${escapeHtml(att.name)}</div>`;
+        }
+        grid.appendChild(item);
+      });
+    }
+
+    modal.classList.add('open');
+  }
+
+  function closeGallery() {
+    document.getElementById('gallery-modal').classList.remove('open');
+  }
+
+  // Lightbox
+  function openLightboxAt(idx) {
+    if (idx < 0 || idx >= attachmentHistory.length) return;
+    lightboxIndex = idx;
+    renderLightbox();
+    document.getElementById('lightbox').classList.add('open');
+  }
+
+  function closeLightbox() {
+    document.getElementById('lightbox').classList.remove('open');
+    document.getElementById('lightbox-content').innerHTML = '';
+  }
+
+  function lightboxNav(dir) {
+    const next = lightboxIndex + dir;
+    if (next >= 0 && next < attachmentHistory.length) {
+      lightboxIndex = next;
+      renderLightbox();
+    }
+  }
+
+  function renderLightbox() {
+    const att = attachmentHistory[lightboxIndex];
+    const content = document.getElementById('lightbox-content');
+    const nameEl = document.getElementById('lightbox-name');
+    nameEl.textContent = att.name;
+
+    if (att.mimeType.startsWith('image/')) {
+      content.innerHTML = `<img src="${att.dataUrl}" alt="${escapeHtml(att.name)}">`;
+    } else if (att.mimeType.startsWith('video/')) {
+      content.innerHTML = `<video controls autoplay><source src="${att.dataUrl}" type="${att.mimeType}"></video>`;
+    } else if (att.mimeType.startsWith('audio/')) {
+      content.innerHTML = `<audio controls autoplay><source src="${att.dataUrl}" type="${att.mimeType}"></audio>`;
+    } else {
+      const ext = att.name.split('.').pop().toUpperCase().slice(0, 4);
+      content.innerHTML = `<div style="text-align:center;color:#555;font-size:0.8rem;letter-spacing:0.15em">${escapeHtml(ext)}<br><br>${escapeHtml(att.name)}</div>`;
+    }
+
+    // Show/hide nav arrows
+    document.querySelector('.lightbox-nav.prev').style.opacity = lightboxIndex > 0 ? '1' : '0.1';
+    document.querySelector('.lightbox-nav.next').style.opacity = lightboxIndex < attachmentHistory.length - 1 ? '1' : '0.1';
   }
 
   function escapeHtml(str) {
@@ -465,6 +1037,14 @@
       sendMessage();
     }
   }
+
+  document.addEventListener('keydown', (e) => {
+    const lb = document.getElementById('lightbox');
+    if (!lb.classList.contains('open')) return;
+    if (e.key === 'Escape') closeLightbox();
+    if (e.key === 'ArrowLeft') lightboxNav(-1);
+    if (e.key === 'ArrowRight') lightboxNav(1);
+  });
 
   function autoResize(el) {
     el.style.height = 'auto';
