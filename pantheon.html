@@ -317,6 +317,73 @@
       border-bottom-color: #333;
     }
 
+    /* ── Search bar ── */
+    .search-bar {
+      padding: 12px 32px;
+      border-bottom: 1px solid #0f0f0f;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .search-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid #1a1a1a;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.78rem;
+      padding: 6px 0;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .search-input:focus { border-bottom-color: #333; }
+    .search-input::placeholder { color: #222; font-size: 0.7rem; letter-spacing: 0.08em; }
+
+    .date-input {
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid #1a1a1a;
+      color: #333;
+      font-family: inherit;
+      font-size: 0.65rem;
+      padding: 6px 0;
+      outline: none;
+      width: 110px;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+
+    .date-input:focus { border-bottom-color: #333; color: var(--text); }
+    .date-input::-webkit-calendar-picker-indicator { filter: invert(0.2); cursor: pointer; }
+
+    .search-clear {
+      background: transparent;
+      border: none;
+      color: #222;
+      font-family: inherit;
+      font-size: 0.62rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      cursor: pointer;
+      padding: 4px 0;
+      transition: color 0.15s;
+      white-space: nowrap;
+    }
+
+    .search-clear:hover { color: #666; }
+    .search-clear.hidden { display: none; }
+
+    .search-count {
+      font-size: 0.6rem;
+      letter-spacing: 0.12em;
+      color: #2a2a2a;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
     .session-topic {
       display: inline-block;
       font-size: 0.54rem;
@@ -379,6 +446,14 @@
   <button class="filter-btn" data-topic="History" onclick="setFilter(this)">History</button>
 </div>
 
+<div class="search-bar">
+  <input class="search-input" id="search-input" type="text" placeholder="Search voices, frames, questions..." oninput="onSearch()">
+  <input class="date-input" id="date-from" type="date" title="From date" onchange="onSearch()">
+  <input class="date-input" id="date-to" type="date" title="To date" onchange="onSearch()">
+  <span class="search-count" id="search-count"></span>
+  <button class="search-clear hidden" id="search-clear" onclick="clearSearch()">Clear</button>
+</div>
+
 <div class="feed" id="feed">
   <div class="empty-state" id="empty">Loading the feed...</div>
 </div>
@@ -396,6 +471,9 @@
 
   let sessions = [];
   let activeTopic = 'All';
+  let searchKeyword = '';
+  let dateFrom = '';
+  let dateTo = '';
 
   async function apiFetch(path) {
     const res = await fetch(path);
@@ -426,6 +504,49 @@
     btn.classList.add('active');
     activeTopic = btn.dataset.topic;
     loadSessions();
+  }
+
+  function onSearch() {
+    searchKeyword = document.getElementById('search-input').value.trim().toLowerCase();
+    dateFrom = document.getElementById('date-from').value;
+    dateTo   = document.getElementById('date-to').value;
+    const hasFilter = searchKeyword || dateFrom || dateTo;
+    document.getElementById('search-clear').classList.toggle('hidden', !hasFilter);
+    renderSessions();
+  }
+
+  function clearSearch() {
+    document.getElementById('search-input').value = '';
+    document.getElementById('date-from').value = '';
+    document.getElementById('date-to').value = '';
+    searchKeyword = '';
+    dateFrom = '';
+    dateTo = '';
+    document.getElementById('search-clear').classList.add('hidden');
+    document.getElementById('search-count').textContent = '';
+    renderSessions();
+  }
+
+  function sessionMatchesSearch(session) {
+    if (dateFrom) {
+      const created = new Date(session.created_at);
+      if (created < new Date(dateFrom)) return false;
+    }
+    if (dateTo) {
+      const created = new Date(session.created_at);
+      const end = new Date(dateTo);
+      end.setHours(23, 59, 59, 999);
+      if (created > end) return false;
+    }
+    if (!searchKeyword) return true;
+    const haystack = [
+      session.thoth_frame || '',
+      session.thoth_question || '',
+      session.trigger_content || '',
+      session.topic || '',
+      ...(session.items || []).map(i => i.content || '')
+    ].join(' ').toLowerCase();
+    return haystack.includes(searchKeyword);
   }
 
   function renderThreadItem(item, isLast) {
@@ -461,10 +582,26 @@
       return;
     }
 
+    const filtered = (searchKeyword || dateFrom || dateTo)
+      ? sessions.filter(sessionMatchesSearch)
+      : sessions;
+
+    const countEl = document.getElementById('search-count');
+    if (searchKeyword || dateFrom || dateTo) {
+      countEl.textContent = `${filtered.length} ${filtered.length === 1 ? 'session' : 'sessions'}`;
+    } else {
+      countEl.textContent = '';
+    }
+
     feed.innerHTML = '';
 
-    for (let s = 0; s < sessions.length; s++) {
-      const session = sessions[s];
+    if (!filtered.length) {
+      feed.innerHTML = '<div class="empty-state">No sessions match.</div>';
+      return;
+    }
+
+    for (let s = 0; s < filtered.length; s++) {
+      const session = filtered[s];
       const items = session.items || [];
 
       // Split Thoth's closing entry from the 13 voices
@@ -534,7 +671,7 @@
 
       feed.appendChild(el);
 
-      if (s < sessions.length - 1) {
+      if (s < filtered.length - 1) {
         const hr = document.createElement('hr');
         hr.className = 'session-divider';
         feed.appendChild(hr);
