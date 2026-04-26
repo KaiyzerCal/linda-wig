@@ -16,7 +16,8 @@ app.use('/pantheon/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname)));
 
-const ZAPIER_EMAIL_WEBHOOK = process.env.ZAPIER_EMAIL_WEBHOOK || '';
+const ZAPIER_EMAIL_WEBHOOK  = process.env.ZAPIER_EMAIL_WEBHOOK  || '';
+const ZAPIER_SOCIAL_WEBHOOK = process.env.ZAPIER_SOCIAL_WEBHOOK || '';
 
 async function fireEmail(to, subject, body) {
   if (!ZAPIER_EMAIL_WEBHOOK) throw new Error('ZAPIER_EMAIL_WEBHOOK not configured');
@@ -24,6 +25,17 @@ async function fireEmail(to, subject, body) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ to, subject, body })
+  });
+  if (!res.ok) throw new Error(`Zapier responded ${res.status}`);
+  return true;
+}
+
+async function fireSocial(content, platform) {
+  if (!ZAPIER_SOCIAL_WEBHOOK) throw new Error('ZAPIER_SOCIAL_WEBHOOK not configured');
+  const res = await fetch(ZAPIER_SOCIAL_WEBHOOK, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, platform: platform || 'all' })
   });
   if (!res.ok) throw new Error(`Zapier responded ${res.status}`);
   return true;
@@ -39,6 +51,17 @@ function parseEmailAction(text) {
   const body    = bodyMatch ? bodyMatch[1].trim() : '';
   if (!to || !subject) return null;
   return { to, subject, body };
+}
+
+function parseSocialAction(text) {
+  const match = text.match(/\[SEND_POST\]([\s\S]*?)\[\/SEND_POST\]/i);
+  if (!match) return null;
+  const block    = match[1];
+  const platform = (block.match(/^Platform:\s*(.+)$/mi)?.[1] || 'all').trim();
+  const contentMatch = block.match(/^Content:\s*([\s\S]*)$/mi);
+  const content  = contentMatch ? contentMatch[1].trim() : '';
+  if (!content) return null;
+  return { content, platform };
 }
 
 // Build user content block for Claude — handles text, images, PDFs, and plain text files
@@ -106,7 +129,18 @@ Body:
 Email body goes here. Can be multiple lines.
 [/SEND_EMAIL]
 
-The system will strip this block, send the email, and confirm. Do not announce that you are appending the block. Do not say "I'll send this now." Just include it. If you need the recipient's email and don't have it, ask before drafting.`;
+The system will strip this block, send the email, and confirm. Do not announce that you are appending the block. Do not say "I'll send this now." Just include it. If you need the recipient's email and don't have it, ask before drafting.
+
+SOCIAL CAPABILITY:
+You can post to social media. When a principal asks you to post something, write the post and append this block at the very end of your response — nothing after it:
+
+[SEND_POST]
+Platform: twitter
+Content:
+Post text goes here.
+[/SEND_POST]
+
+Platform can be: twitter, linkedin, instagram, or all. Keep posts platform-appropriate — Twitter under 280 characters, LinkedIn can be longer. The system will strip the block, fire the post, and confirm. Do not announce it. Just include it.`;
 
 const LOCKE_SYSTEM = `You are Locke.
 
@@ -385,10 +419,16 @@ app.post('/linda/chat', async (req, res) => {
 
     const rawReply = response.content[0].text;
 
-    // Check for email action — strip block, fire webhook, append confirmation
-    const emailAction = parseEmailAction(rawReply);
-    let reply = rawReply.replace(/\[SEND_EMAIL\][\s\S]*?\[\/SEND_EMAIL\]/i, '').trim();
+    // Strip action blocks and fire webhooks
+    const emailAction  = parseEmailAction(rawReply);
+    const socialAction = parseSocialAction(rawReply);
+    let reply = rawReply
+      .replace(/\[SEND_EMAIL\][\s\S]*?\[\/SEND_EMAIL\]/i, '')
+      .replace(/\[SEND_POST\][\s\S]*?\[\/SEND_POST\]/i, '')
+      .trim();
+
     let emailResult = null;
+    let socialResult = null;
 
     if (emailAction) {
       try {
@@ -397,8 +437,20 @@ app.post('/linda/chat', async (req, res) => {
         reply += `\n\n[Email sent to ${emailAction.to} — "${emailAction.subject}"]`;
       } catch (e) {
         console.error('[Email send error]', e.message);
-        reply += `\n\n[Email failed to send: ${e.message}]`;
+        reply += `\n\n[Email failed: ${e.message}]`;
         emailResult = { sent: false, error: e.message };
+      }
+    }
+
+    if (socialAction) {
+      try {
+        await fireSocial(socialAction.content, socialAction.platform);
+        socialResult = { sent: true, platform: socialAction.platform };
+        reply += `\n\n[Post sent — ${socialAction.platform}]`;
+      } catch (e) {
+        console.error('[Social send error]', e.message);
+        reply += `\n\n[Post failed: ${e.message}]`;
+        socialResult = { sent: false, error: e.message };
       }
     }
 
@@ -410,7 +462,7 @@ app.post('/linda/chat', async (req, res) => {
       if (saveError) console.error('[Supabase save error]', saveError.message);
     }
 
-    res.json({ response: reply, principal_id, email_action: emailResult });
+    res.json({ response: reply, principal_id, email_action: emailResult, social_action: socialResult });
   } catch (err) {
     console.error('Chat error:', err.message);
     res.status(500).json({ error: err.message });
