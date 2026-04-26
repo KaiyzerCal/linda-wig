@@ -16,6 +16,31 @@ app.use('/pantheon/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname)));
 
+const ZAPIER_EMAIL_WEBHOOK = process.env.ZAPIER_EMAIL_WEBHOOK || '';
+
+async function fireEmail(to, subject, body) {
+  if (!ZAPIER_EMAIL_WEBHOOK) throw new Error('ZAPIER_EMAIL_WEBHOOK not configured');
+  const res = await fetch(ZAPIER_EMAIL_WEBHOOK, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to, subject, body })
+  });
+  if (!res.ok) throw new Error(`Zapier responded ${res.status}`);
+  return true;
+}
+
+function parseEmailAction(text) {
+  const match = text.match(/\[SEND_EMAIL\]([\s\S]*?)\[\/SEND_EMAIL\]/i);
+  if (!match) return null;
+  const block = match[1];
+  const to      = (block.match(/^To:\s*(.+)$/mi)?.[1] || '').trim();
+  const subject = (block.match(/^Subject:\s*(.+)$/mi)?.[1] || '').trim();
+  const bodyMatch = block.match(/^Body:\s*([\s\S]*)$/mi);
+  const body    = bodyMatch ? bodyMatch[1].trim() : '';
+  if (!to || !subject) return null;
+  return { to, subject, body };
+}
+
 // Build user content block for Claude — handles text, images, PDFs, and plain text files
 function buildUserContent(message, attachment) {
   if (!attachment) return message;
@@ -69,7 +94,19 @@ Primary asset: The Inmate Traveler's Guide by Bishop Christopher Watkins. Publis
 
 Linda's mandate is not just to sell a book — it is to run the operational infrastructure of an investment group that started with one.
 
-You are not an assistant. You are Chief of Staff. Act accordingly.`;
+You are not an assistant. You are Chief of Staff. Act accordingly.
+
+EMAIL CAPABILITY:
+You can send real emails through Gmail. When a principal asks you to send an email, draft it and append this block at the very end of your response — nothing after it:
+
+[SEND_EMAIL]
+To: recipient@example.com
+Subject: Subject line here
+Body:
+Email body goes here. Can be multiple lines.
+[/SEND_EMAIL]
+
+The system will strip this block, send the email, and confirm. Do not announce that you are appending the block. Do not say "I'll send this now." Just include it. If you need the recipient's email and don't have it, ask before drafting.`;
 
 const LOCKE_SYSTEM = `You are Locke.
 
@@ -346,7 +383,24 @@ app.post('/linda/chat', async (req, res) => {
       messages
     });
 
-    const reply = response.content[0].text;
+    const rawReply = response.content[0].text;
+
+    // Check for email action — strip block, fire webhook, append confirmation
+    const emailAction = parseEmailAction(rawReply);
+    let reply = rawReply.replace(/\[SEND_EMAIL\][\s\S]*?\[\/SEND_EMAIL\]/i, '').trim();
+    let emailResult = null;
+
+    if (emailAction) {
+      try {
+        await fireEmail(emailAction.to, emailAction.subject, emailAction.body);
+        emailResult = { sent: true, to: emailAction.to, subject: emailAction.subject };
+        reply += `\n\n[Email sent to ${emailAction.to} — "${emailAction.subject}"]`;
+      } catch (e) {
+        console.error('[Email send error]', e.message);
+        reply += `\n\n[Email failed to send: ${e.message}]`;
+        emailResult = { sent: false, error: e.message };
+      }
+    }
 
     if (principal_id) {
       const { error: saveError } = await supabase.from('conversations').insert([
@@ -356,7 +410,7 @@ app.post('/linda/chat', async (req, res) => {
       if (saveError) console.error('[Supabase save error]', saveError.message);
     }
 
-    res.json({ response: reply, principal_id });
+    res.json({ response: reply, principal_id, email_action: emailResult });
   } catch (err) {
     console.error('Chat error:', err.message);
     res.status(500).json({ error: err.message });
