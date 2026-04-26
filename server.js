@@ -6,6 +6,7 @@ const { createClient } = require('@supabase/supabase-js');
 const path = require('path');
 const fs = require('fs');
 const Stripe = require('stripe');
+const nodemailer = require('nodemailer');
 
 const app = express();
 app.use(cors());
@@ -16,19 +17,22 @@ app.use('/pantheon/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname)));
 
-const ZAPIER_EMAIL_WEBHOOK    = process.env.ZAPIER_EMAIL_WEBHOOK    || '';
-const ZAPIER_SOCIAL_WEBHOOK   = process.env.ZAPIER_SOCIAL_WEBHOOK   || '';
-const ZAPIER_OUTREACH_WEBHOOK = process.env.ZAPIER_OUTREACH_WEBHOOK || '';
-const ZAPIER_SLACK_WEBHOOK    = process.env.ZAPIER_SLACK_WEBHOOK    || '';
+const ZAPIER_SOCIAL_WEBHOOK = process.env.ZAPIER_SOCIAL_WEBHOOK || '';
+const SLACK_WEBHOOK_URL     = process.env.SLACK_WEBHOOK_URL     || '';
+
+const mailTransporter = (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD)
+  ? nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD }
+    })
+  : null;
 
 async function fireEmail(to, subject, body) {
-  if (!ZAPIER_EMAIL_WEBHOOK) throw new Error('ZAPIER_EMAIL_WEBHOOK not configured');
-  const res = await fetch(ZAPIER_EMAIL_WEBHOOK, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ to, subject, body })
+  if (!mailTransporter) throw new Error('GMAIL_USER / GMAIL_APP_PASSWORD not configured');
+  await mailTransporter.sendMail({
+    from: `Linda — WIG <${process.env.GMAIL_USER}>`,
+    to, subject, text: body
   });
-  if (!res.ok) throw new Error(`Zapier responded ${res.status}`);
   return true;
 }
 
@@ -67,13 +71,12 @@ function parseSocialAction(text) {
 }
 
 async function fireOutreach(to, subject, body, contact_name, notes) {
-  if (!ZAPIER_OUTREACH_WEBHOOK) throw new Error('ZAPIER_OUTREACH_WEBHOOK not configured');
-  const res = await fetch(ZAPIER_OUTREACH_WEBHOOK, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ to, subject, body, contact_name: contact_name || '', notes: notes || '' })
+  if (!mailTransporter) throw new Error('GMAIL_USER / GMAIL_APP_PASSWORD not configured');
+  const notesSuffix = notes ? `\n\n---\nOutreach note: ${notes}` : '';
+  await mailTransporter.sendMail({
+    from: `Linda — WIG <${process.env.GMAIL_USER}>`,
+    to, subject, text: body + notesSuffix
   });
-  if (!res.ok) throw new Error(`Zapier responded ${res.status}`);
   return true;
 }
 
@@ -92,11 +95,11 @@ function parseOutreachAction(text) {
 }
 
 async function fireSlack(message) {
-  if (!ZAPIER_SLACK_WEBHOOK) return;
-  await fetch(ZAPIER_SLACK_WEBHOOK, {
+  if (!SLACK_WEBHOOK_URL) return;
+  await fetch(SLACK_WEBHOOK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message })
+    body: JSON.stringify({ text: message })
   }).catch(e => console.error('[Slack send error]', e.message));
 }
 
