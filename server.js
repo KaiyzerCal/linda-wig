@@ -908,7 +908,7 @@ async function callPersona(systemPrompt, userMessage, maxTokens = 280) {
   return res.content[0]?.type === 'text' ? res.content[0].text.trim() : '';
 }
 
-async function runPantheonSession(personas, triggerType, headline, sourceUrl) {
+async function runPantheonSession(personas, triggerType, headline, sourceUrl, forceTopic = null) {
   const thoth = personas.find(p => p.name === 'Thoth');
   if (!thoth) throw new Error('Thoth not found');
 
@@ -922,7 +922,8 @@ async function runPantheonSession(personas, triggerType, headline, sourceUrl) {
     triggerContent = headline;
     thothOpenPrompt = `A new event has entered the record. Frame it in two sentences without interpretation. Then ask the one question that most precisely opens it. Classify it under exactly one topic. Respond in this exact format — TOPIC: [one of: ${TOPICS}] FRAME: [your frame] QUESTION: [your question]\n\nThe event: ${headline}`;
   } else {
-    thothOpenPrompt = `The news cycle is quiet. Reach into the historical record. Find the event from human history that most precisely rhymes with the current state of the world. Name the event. Name the date. Name the civilization. Name the specific structural rhyme with the present moment in one sentence. Then ask the question the present moment most needs to hear from it. Respond in this exact format — EVENT: [historical event, date, civilization] FRAME: [specific structural rhyme with the present moment] QUESTION: [the question]`;
+    const topicLine = forceTopic ? ` Focus specifically on the domain of: ${forceTopic}.` : '';
+    thothOpenPrompt = `The news cycle is quiet. Reach into the historical record.${topicLine} Find the event from human history that most precisely rhymes with the current state of the world. Name the event. Name the date. Name the civilization. Name the specific structural rhyme with the present moment in one sentence. Then ask the question the present moment most needs to hear from it. Respond in this exact format — EVENT: [historical event, date, civilization] FRAME: [specific structural rhyme with the present moment] QUESTION: [the question]`;
     triggerContent = '';
   }
 
@@ -934,7 +935,7 @@ async function runPantheonSession(personas, triggerType, headline, sourceUrl) {
     frame    = (thothOpenRaw.match(/FRAME:\s*([\s\S]*?)(?=QUESTION:|$)/i)?.[1] || thothOpenRaw).trim();
     question = (thothOpenRaw.match(/QUESTION:\s*([\s\S]*?)$/i)?.[1] || '').trim();
   } else {
-    topic    = 'History';
+    topic    = forceTopic || 'History';
     triggerContent = (thothOpenRaw.match(/EVENT:\s*([\s\S]*?)(?=FRAME:|$)/i)?.[1] || '').trim();
     frame    = (thothOpenRaw.match(/FRAME:\s*([\s\S]*?)(?=QUESTION:|$)/i)?.[1] || '').trim();
     question = (thothOpenRaw.match(/QUESTION:\s*([\s\S]*?)$/i)?.[1] || '').trim();
@@ -1095,11 +1096,12 @@ async function handlePantheonTrigger(req, res) {
     let triggerType = 'news';
 
     const forceHistorical = req.body?.force === 'historical' || req.query?.force === 'historical';
+    const forceTopic = req.body?.topic || req.query?.topic || null;
 
     if (!toRun.length) {
       const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
       const { data: recent } = await supabase.from('pantheon_sessions').select('id').gte('created_at', sixHoursAgo).limit(1);
-      if (!recent?.length || forceHistorical) triggerType = 'historical';
+      if (!recent?.length || forceHistorical || forceTopic) triggerType = 'historical';
       else return res.json({ message: 'No new headlines and recent session exists. Chamber is resting.', sessions_queued: 0 });
     }
 
@@ -1110,7 +1112,7 @@ async function handlePantheonTrigger(req, res) {
     (async () => {
       if (triggerType === 'historical') {
         try {
-          await runPantheonSession(personas, 'historical', null, null);
+          await runPantheonSession(personas, 'historical', null, null, forceTopic);
         } catch (e) {
           console.error('[Pantheon] Historical session error:', e.message);
         }
