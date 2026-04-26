@@ -988,3 +988,62 @@ app.listen(PORT, () => {
   console.log(`\nLinda is operational — http://localhost:${PORT}`);
   console.log(`Health: http://localhost:${PORT}/linda/health\n`);
 });
+
+// ─── PANTHEON AUTO-TRIGGER ────────────────────────────────────────────────────
+// Runs every 90 minutes. No console, no edge functions, no external scheduler.
+
+async function pantheonAutoTrigger() {
+  console.log('[Pantheon] Auto-trigger fired.');
+  try {
+    const { data: personas } = await supabase
+      .from('pantheon_personas')
+      .select('id, name, system_prompt')
+      .eq('is_active', true);
+
+    if (!personas?.length) return console.log('[Pantheon] No active personas.');
+
+    const { data: existing } = await supabase
+      .from('pantheon_feed_items')
+      .select('source_url')
+      .order('created_at', { ascending: false })
+      .limit(200);
+
+    const existingUrls = new Set((existing || []).map(r => r.source_url).filter(Boolean));
+    const newItems = [];
+
+    for (const feedUrl of PANTHEON_RSS_FEEDS) {
+      try {
+        const feedRes = await fetch(feedUrl, { headers: { 'User-Agent': 'PantheonFeed/1.0' }, signal: AbortSignal.timeout(8000) });
+        if (!feedRes.ok) continue;
+        const xml = await feedRes.text();
+        for (const item of parseRssItems(xml)) {
+          if (!existingUrls.has(item.link)) { newItems.push(item); existingUrls.add(item.link); }
+        }
+      } catch (e) {
+        console.error('[Pantheon] RSS fetch failed:', e.message);
+      }
+    }
+
+    const toRun = newItems.slice(0, 2);
+
+    if (toRun.length) {
+      console.log(`[Pantheon] ${toRun.length} new headline(s). Chamber convening.`);
+      for (const item of toRun) {
+        await runPantheonSession(personas, 'news', item.title, item.link);
+      }
+    } else {
+      const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+      const { data: recent } = await supabase.from('pantheon_sessions').select('id').gte('created_at', sixHoursAgo).limit(1);
+      if (!recent?.length) {
+        console.log('[Pantheon] No new headlines. Triggering historical session.');
+        await runPantheonSession(personas, 'historical', null, null);
+      } else {
+        console.log('[Pantheon] No new headlines. Recent session exists. Resting.');
+      }
+    }
+  } catch (e) {
+    console.error('[Pantheon] Auto-trigger error:', e.message);
+  }
+}
+
+setInterval(pantheonAutoTrigger, 90 * 60 * 1000); // every 90 minutes
