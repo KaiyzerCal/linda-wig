@@ -666,32 +666,31 @@ async function callPersona(systemPrompt, userMessage, maxTokens = 280) {
 
 async function runPantheonSession(personas, triggerType, headline, sourceUrl) {
   const thoth = personas.find(p => p.name === 'Thoth');
-  const fen   = personas.find(p => p.name === 'Fen');
-  const kael  = personas.find(p => p.name === 'Kael');
-  const maren = personas.find(p => p.name === 'Maren');
+  if (!thoth) throw new Error('Thoth not found');
 
-  if (!thoth || !fen || !kael || !maren) throw new Error('Missing one or more personas');
+  const VOICE_ORDER = ['Vael','Fen','Seren','Nael','Auren','Kael','Maren','Osiris','Davan','Solun','Aven','Mira','Aldun'];
+  const voices = VOICE_ORDER.map(name => personas.find(p => p.name === name)).filter(Boolean);
 
   // Step 1 — Thoth opens
-  let thothPrompt, triggerContent;
+  let thothOpenPrompt, triggerContent;
   if (triggerType === 'news') {
     triggerContent = headline;
-    thothPrompt = `A new event has entered the record. Frame it in two sentences without interpretation. Then ask the one question that most precisely opens it. Respond in this exact format — FRAME: [your frame] QUESTION: [your question]\n\nThe event: ${headline}`;
+    thothOpenPrompt = `A new event has entered the record. Frame it in two sentences without interpretation. Then ask the one question that most precisely opens it. Respond in this exact format — FRAME: [your frame] QUESTION: [your question]\n\nThe event: ${headline}`;
   } else {
-    thothPrompt = `The news cycle is quiet. Reach into the historical record. Find the event from human history that most precisely rhymes with the current state of the world. Name the event. Frame why it rhymes. Ask the question the current moment most needs to hear from it. Respond in this exact format — EVENT: [historical event and date] FRAME: [why it rhymes now] QUESTION: [the question]`;
+    thothOpenPrompt = `The news cycle is quiet. Reach into the historical record. Find the event from human history that most precisely rhymes with the current state of the world. Name the event. Name the date. Name the civilization. Name the specific structural rhyme with the present moment in one sentence. Then ask the question the present moment most needs to hear from it. Respond in this exact format — EVENT: [historical event, date, civilization] FRAME: [specific structural rhyme with the present moment] QUESTION: [the question]`;
+    triggerContent = '';
   }
 
-  const thothRaw = await callPersona(thoth.system_prompt, thothPrompt, 320);
+  const thothOpenRaw = await callPersona(thoth.system_prompt, thothOpenPrompt, 350);
 
   let frame, question;
   if (triggerType === 'news') {
-    frame    = (thothRaw.match(/FRAME:\s*([\s\S]*?)(?=QUESTION:|$)/i)?.[1] || thothRaw).trim();
-    question = (thothRaw.match(/QUESTION:\s*([\s\S]*?)$/i)?.[1] || '').trim();
+    frame    = (thothOpenRaw.match(/FRAME:\s*([\s\S]*?)(?=QUESTION:|$)/i)?.[1] || thothOpenRaw).trim();
+    question = (thothOpenRaw.match(/QUESTION:\s*([\s\S]*?)$/i)?.[1] || '').trim();
   } else {
-    const eventStr = (thothRaw.match(/EVENT:\s*([\s\S]*?)(?=FRAME:|$)/i)?.[1] || '').trim();
-    frame    = (thothRaw.match(/FRAME:\s*([\s\S]*?)(?=QUESTION:|$)/i)?.[1] || '').trim();
-    question = (thothRaw.match(/QUESTION:\s*([\s\S]*?)$/i)?.[1] || '').trim();
-    triggerContent = eventStr || thothRaw.slice(0, 200);
+    triggerContent = (thothOpenRaw.match(/EVENT:\s*([\s\S]*?)(?=FRAME:|$)/i)?.[1] || '').trim();
+    frame    = (thothOpenRaw.match(/FRAME:\s*([\s\S]*?)(?=QUESTION:|$)/i)?.[1] || '').trim();
+    question = (thothOpenRaw.match(/QUESTION:\s*([\s\S]*?)$/i)?.[1] || '').trim();
   }
 
   const { data: session, error: sessionErr } = await supabase
@@ -702,44 +701,50 @@ async function runPantheonSession(personas, triggerType, headline, sourceUrl) {
   if (sessionErr) throw new Error('Session insert failed: ' + sessionErr.message);
   const sid = session.id;
   const sourceHeadline = triggerType === 'news' ? headline : triggerContent;
+  const baseContext = `${frame}\n\nThoth asks: ${question}\n\nThe event: ${triggerContent || '(historical session)'}`;
 
-  const baseContext = `${frame}\n\nThoth asks: ${question}\n\nThe event: ${triggerContent}`;
+  // Steps 2–14 — Thirteen voices in sequence, each hearing all prior voices
+  const thread = []; // { name, content }
+  let lastItemId = null;
 
-  // Step 2 — Fen first
-  const fenText1 = await callPersona(fen.system_prompt, baseContext);
-  const { data: fenItem1 } = await supabase.from('pantheon_feed_items')
-    .insert([{ persona_id: fen.id, content: fenText1, source_headline: sourceHeadline, source_url: sourceUrl || null, session_id: sid, in_response_to: null }])
-    .select().single();
+  for (const voice of voices) {
+    const priorText = thread.length
+      ? '\n\n—\n\n' + thread.map(t => `${t.name}: "${t.content}"`).join('\n\n') + '\n\nFrom your nature, speak.'
+      : '\n\nSpeak.';
 
-  // Step 3 — Kael, has heard Fen
-  const kaelText = await callPersona(
-    kael.system_prompt + '\n\nFen has already spoken. You have heard him. Respond to the event and to what Fen said if it warrants response.',
-    `${baseContext}\n\nFen said: "${fenText1}"`
-  );
-  const { data: kaelItem } = await supabase.from('pantheon_feed_items')
-    .insert([{ persona_id: kael.id, content: kaelText, source_headline: sourceHeadline, source_url: sourceUrl || null, session_id: sid, in_response_to: fenItem1?.id || null }])
-    .select().single();
+    let content;
+    try {
+      content = await callPersona(voice.system_prompt, baseContext + priorText);
+    } catch (e) {
+      console.error(`[Pantheon] ${voice.name} failed:`, e.message);
+      content = '[This voice did not speak.]';
+    }
 
-  // Step 4 — Maren, has heard Fen and Kael
-  const marenText = await callPersona(
-    maren.system_prompt + '\n\nFen and Kael have spoken. You have heard them both.',
-    `${baseContext}\n\nFen said: "${fenText1}"\n\nKael said: "${kaelText}"`
-  );
-  const { data: marenItem } = await supabase.from('pantheon_feed_items')
-    .insert([{ persona_id: maren.id, content: marenText, source_headline: sourceHeadline, source_url: sourceUrl || null, session_id: sid, in_response_to: kaelItem?.id || null }])
-    .select().single();
+    const { data: item } = await supabase.from('pantheon_feed_items')
+      .insert([{ persona_id: voice.id, content, source_headline: sourceHeadline, source_url: sourceUrl || null, session_id: sid, in_response_to: lastItemId }])
+      .select().single();
 
-  // Step 5 — Fen closes or goes silent
-  const fenCloseText = await callPersona(
-    fen.system_prompt + '\n\nYou have heard Kael and Maren respond. You may have the last word or you may be silent. If you speak make it count. If the others have said what needed saying respond with exactly: [silence]',
-    `${baseContext}\n\nYou said: "${fenText1}"\n\nKael said: "${kaelText}"\n\nMaren said: "${marenText}"`
-  );
-
-  const isSilent = !fenCloseText || fenCloseText.replace(/\s/g, '').toLowerCase() === '[silence]' || fenCloseText.includes('[silence]');
-  if (!isSilent) {
-    await supabase.from('pantheon_feed_items')
-      .insert([{ persona_id: fen.id, content: fenCloseText, source_headline: sourceHeadline, source_url: sourceUrl || null, session_id: sid, in_response_to: marenItem?.id || null }]);
+    thread.push({ name: voice.name, content });
+    if (item?.id) lastItemId = item.id;
   }
+
+  // Step 15 — Thoth closes the record
+  const { count: sessionCount } = await supabase
+    .from('pantheon_sessions')
+    .select('*', { count: 'exact', head: true });
+
+  const fullThread = thread.map(t => `${t.name}: "${t.content}"`).join('\n\n');
+  const thothClosePrompt = `The session is complete. Thirteen voices have spoken:\n\n${fullThread}\n\nYou are Thoth. You do not summarize. You record. In no more than two sentences name what this session established that was not fully visible before it began. Then end with exactly: "The record is complete. Session ${sessionCount || '?'}. The feed does not stop."`;
+
+  let thothClose;
+  try {
+    thothClose = await callPersona(thoth.system_prompt, thothClosePrompt, 220);
+  } catch (e) {
+    thothClose = `The record is complete. Session ${sessionCount || '?'}. The feed does not stop.`;
+  }
+
+  await supabase.from('pantheon_feed_items')
+    .insert([{ persona_id: thoth.id, content: thothClose, source_headline: sourceHeadline, source_url: sourceUrl || null, session_id: sid, in_response_to: lastItemId }]);
 
   return sid;
 }
@@ -806,7 +811,8 @@ app.get('/pantheon/session-count', async (req, res) => {
   }
 });
 
-// Trigger — full dialog session: Thoth opens, Fen/Kael/Maren respond, Fen closes
+// Trigger — responds immediately, runs full 14-voice session in background
+// Each session takes ~3–5 minutes (15 sequential AI calls). Fire and forget.
 app.post('/pantheon/trigger', async (req, res) => {
   try {
     const { data: personas, error: personaError } = await supabase
@@ -840,41 +846,42 @@ app.post('/pantheon/trigger', async (req, res) => {
       }
     }
 
-    const sessionsCreated = [];
-    const errors = [];
+    const toRun = newItems.slice(0, 2); // cap at 2 sessions per trigger
+    let triggerType = 'news';
 
-    if (newItems.length) {
-      for (const item of newItems) {
-        try {
-          const sid = await runPantheonSession(personas, 'news', item.title, item.link);
-          sessionsCreated.push(sid);
-        } catch (e) {
-          errors.push(e.message);
-        }
-      }
-    } else {
-      // No new news — check if a historical session is warranted
+    if (!toRun.length) {
       const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
-      const { data: recent } = await supabase
-        .from('pantheon_sessions')
-        .select('id')
-        .gte('created_at', sixHoursAgo)
-        .limit(1);
-
-      if (!recent?.length) {
-        try {
-          const sid = await runPantheonSession(personas, 'historical', null, null);
-          sessionsCreated.push(sid);
-        } catch (e) {
-          errors.push(e.message);
-        }
-      }
+      const { data: recent } = await supabase.from('pantheon_sessions').select('id').gte('created_at', sixHoursAgo).limit(1);
+      if (!recent?.length) triggerType = 'historical';
+      else return res.json({ message: 'No new headlines and recent session exists. Chamber is resting.', sessions_queued: 0 });
     }
 
-    res.json({ message: 'Trigger complete', sessions_created: sessionsCreated.length, session_ids: sessionsCreated, errors });
+    // Respond immediately — chamber convenes in background
+    res.json({ message: 'The chamber is convening.', sessions_queued: triggerType === 'historical' ? 1 : toRun.length, note: 'Sessions appear on the feed as each voice completes (~3–5 min per session).' });
+
+    // Background generation — fire and forget
+    (async () => {
+      if (triggerType === 'historical') {
+        try {
+          await runPantheonSession(personas, 'historical', null, null);
+        } catch (e) {
+          console.error('[Pantheon] Historical session error:', e.message);
+        }
+      } else {
+        for (const item of toRun) {
+          try {
+            await runPantheonSession(personas, 'news', item.title, item.link);
+          } catch (e) {
+            console.error('[Pantheon] News session error:', e.message);
+          }
+        }
+      }
+      console.log('[Pantheon] Background generation complete.');
+    })().catch(e => console.error('[Pantheon] Background fatal:', e.message));
+
   } catch (err) {
     console.error('[Pantheon trigger error]', err.message);
-    res.status(500).json({ error: err.message });
+    if (!res.headersSent) res.status(500).json({ error: err.message });
   }
 });
 
