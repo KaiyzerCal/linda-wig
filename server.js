@@ -19,6 +19,7 @@ app.use(express.static(path.join(__dirname)));
 const ZAPIER_EMAIL_WEBHOOK    = process.env.ZAPIER_EMAIL_WEBHOOK    || '';
 const ZAPIER_SOCIAL_WEBHOOK   = process.env.ZAPIER_SOCIAL_WEBHOOK   || '';
 const ZAPIER_OUTREACH_WEBHOOK = process.env.ZAPIER_OUTREACH_WEBHOOK || '';
+const ZAPIER_SLACK_WEBHOOK    = process.env.ZAPIER_SLACK_WEBHOOK    || '';
 
 async function fireEmail(to, subject, body) {
   if (!ZAPIER_EMAIL_WEBHOOK) throw new Error('ZAPIER_EMAIL_WEBHOOK not configured');
@@ -88,6 +89,22 @@ function parseOutreachAction(text) {
   const body         = bodyMatch ? bodyMatch[1].trim() : '';
   if (!to || !subject) return null;
   return { to, subject, body, contact_name, notes };
+}
+
+async function fireSlack(message) {
+  if (!ZAPIER_SLACK_WEBHOOK) return;
+  await fetch(ZAPIER_SLACK_WEBHOOK, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message })
+  }).catch(e => console.error('[Slack send error]', e.message));
+}
+
+function parseSlackAction(text) {
+  const match = text.match(/\[SEND_SLACK\]([\s\S]*?)\[\/SEND_SLACK\]/i);
+  if (!match) return null;
+  const message = match[1].trim();
+  return message ? { message } : null;
 }
 
 // Build user content block for Claude — handles text, images, PDFs, and plain text files
@@ -180,7 +197,16 @@ Body:
 Email body here.
 [/SEND_OUTREACH]
 
-The difference between EMAIL and OUTREACH: email is operational (sending something to someone we already work with). Outreach is strategic (opening a door with someone new). Use the right one. Do not announce it. Just include it.`;
+The difference between EMAIL and OUTREACH: email is operational (sending something to someone we already work with). Outreach is strategic (opening a door with someone new). Use the right one. Do not announce it. Just include it.
+
+SLACK CAPABILITY:
+You can send a direct Slack message to Bishop. Use this for urgent flags, mission updates, or anything that needs his immediate attention. Append this block at the very end of your response:
+
+[SEND_SLACK]
+Your message to Bishop here.
+[/SEND_SLACK]
+
+Use sparingly — Slack is for things that need a response, not for routine updates. Do not announce it. Just include it.`;
 
 const LOCKE_SYSTEM = `You are Locke.
 
@@ -463,10 +489,12 @@ app.post('/linda/chat', async (req, res) => {
     const emailAction    = parseEmailAction(rawReply);
     const socialAction   = parseSocialAction(rawReply);
     const outreachAction = parseOutreachAction(rawReply);
+    const slackAction    = parseSlackAction(rawReply);
     let reply = rawReply
       .replace(/\[SEND_EMAIL\][\s\S]*?\[\/SEND_EMAIL\]/i, '')
       .replace(/\[SEND_POST\][\s\S]*?\[\/SEND_POST\]/i, '')
       .replace(/\[SEND_OUTREACH\][\s\S]*?\[\/SEND_OUTREACH\]/i, '')
+      .replace(/\[SEND_SLACK\][\s\S]*?\[\/SEND_SLACK\]/i, '')
       .trim();
 
     let emailResult = null;
@@ -517,7 +545,19 @@ app.post('/linda/chat', async (req, res) => {
       if (saveError) console.error('[Supabase save error]', saveError.message);
     }
 
-    res.json({ response: reply, principal_id, email_action: emailResult, social_action: socialResult, outreach_action: outreachResult });
+    let slackResult = null;
+    if (slackAction) {
+      try {
+        await fireSlack(slackAction.message);
+        slackResult = { sent: true };
+        reply += `\n\n[Slack message sent to Bishop]`;
+      } catch (e) {
+        reply += `\n\n[Slack failed: ${e.message}]`;
+        slackResult = { sent: false, error: e.message };
+      }
+    }
+
+    res.json({ response: reply, principal_id, email_action: emailResult, social_action: socialResult, outreach_action: outreachResult, slack_action: slackResult });
   } catch (err) {
     console.error('Chat error:', err.message);
     res.status(500).json({ error: err.message });
@@ -548,6 +588,9 @@ app.post('/linda/missions', async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+    // Notify Bishop on Slack when a new mission is created
+    const priorityLabel = priority ? ` [${priority.toUpperCase()}]` : '';
+    fireSlack(`New mission created${priorityLabel}: ${title}${description ? '\n' + description : ''}`);
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
