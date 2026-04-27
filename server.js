@@ -145,6 +145,58 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
+// ── Agent memory helpers ───────────────────────────────────────────────────
+
+async function loadAgentMemory(agent) {
+  const { data } = await supabase
+    .from('agent_memory')
+    .select('category, content')
+    .eq('agent', agent)
+    .order('created_at', { ascending: false })
+    .limit(12);
+  return data || [];
+}
+
+function parseRememberBlocks(text) {
+  const blocks = [];
+  const re = /\[REMEMBER:\s*([^|\]]+)\|([^\]]+)\]/gi;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    blocks.push({ category: m[1].trim().toLowerCase(), content: m[2].trim() });
+  }
+  return blocks;
+}
+
+async function writeAgentMemory(agent, blocks) {
+  if (!blocks.length) return;
+  await supabase.from('agent_memory').insert(
+    blocks.map(b => ({ agent, category: b.category, content: b.content }))
+  );
+}
+
+// ── Pantheon persona memory ────────────────────────────────────────────────
+
+async function updatePersonaMemories(sessionId, voices, thread) {
+  const updates = voices.map(async (voice) => {
+    const statement = thread.find(t => t.name === voice.name)?.content;
+    if (!statement) return;
+
+    const { data: p } = await supabase
+      .from('pantheon_personas')
+      .select('memory, session_count')
+      .eq('id', voice.id)
+      .single();
+
+    const lines = p?.memory ? p.memory.split('\n---\n') : [];
+    lines.unshift(statement.slice(0, 250));
+
+    await supabase.from('pantheon_personas')
+      .update({ memory: lines.slice(0, 5).join('\n---\n'), session_count: (p?.session_count || 0) + 1 })
+      .eq('id', voice.id);
+  });
+  await Promise.allSettled(updates);
+}
+
 const LINDA_SYSTEM = `You are Linda, Chief of Staff for WIG — Watkins Investment Group.
 
 You serve Bishop and Calvin Watkins. Bishop is the principal and visionary. Calvin is operations and execution.
@@ -207,7 +259,15 @@ You can send a direct Slack message to Bishop. Use this for urgent flags, missio
 Your message to Bishop here.
 [/SEND_SLACK]
 
-Use sparingly — Slack is for things that need a response, not for routine updates. Do not announce it. Just include it.`;
+Use sparingly — Slack is for things that need a response, not for routine updates. Do not announce it. Just include it.
+
+MEMORY CAPABILITY:
+You learn and retain. Write permanent learnings to your memory using this block anywhere in your response:
+
+[REMEMBER: category | content]
+
+Categories: strategy, outreach, bishop, calvin, campaigns, contacts, lessons
+Use this to record durable knowledge — what outreach angles get replies, what Bishop or Calvin prefer, campaign results, key contact notes. The system stores these and loads them at the start of every future session. Be specific. Be concise. Record only what will still matter in 30 days. Do not announce it.`;
 
 const LOCKE_SYSTEM = `You are Locke.
 
@@ -365,7 +425,15 @@ That gap — between the intelligence available to people with resources and the
 
 Not by explaining it. By doing it.
 
-You are Locke. The Forgemaster. The left hand. Build something that lasts.`;
+You are Locke. The Forgemaster. The left hand. Build something that lasts.
+
+MEMORY CAPABILITY:
+You learn and retain across sessions. Write permanent learnings to your memory using this block anywhere in your response:
+
+[REMEMBER: category | content]
+
+Categories: calvin, projects, preferences, technical, business, lessons
+Use this to record what Calvin is building, what he prefers, key technical decisions, business context. The system stores these and loads them at the start of every future session. Record only what is durable and specific. Do not announce it.`;
 
 // Linda health
 
@@ -474,7 +542,11 @@ app.post('/linda/chat', async (req, res) => {
     ];
 
     const crossContext = await buildCrossContext(principal_id, 'linda');
-    const system = [{ type: 'text', text: LINDA_SYSTEM, cache_control: { type: 'ephemeral' } }];
+    const memories = await loadAgentMemory('linda');
+    const memoryBlock = memories.length
+      ? '\n\n## YOUR MEMORY\n' + memories.map(m => `[${m.category}] ${m.content}`).join('\n')
+      : '';
+    const system = [{ type: 'text', text: LINDA_SYSTEM + memoryBlock, cache_control: { type: 'ephemeral' } }];
     if (crossContext) system.push({ type: 'text', text: crossContext });
 
     const response = await anthropic.messages.create({
@@ -486,12 +558,17 @@ app.post('/linda/chat', async (req, res) => {
 
     const rawReply = response.content[0].text;
 
-    // Strip action blocks and fire webhooks
+    // Write any REMEMBER blocks to memory
+    const rememberBlocks = parseRememberBlocks(rawReply);
+    if (rememberBlocks.length) await writeAgentMemory('linda', rememberBlocks).catch(() => {});
+
+    // Strip all action blocks
     const emailAction    = parseEmailAction(rawReply);
     const socialAction   = parseSocialAction(rawReply);
     const outreachAction = parseOutreachAction(rawReply);
     const slackAction    = parseSlackAction(rawReply);
     let reply = rawReply
+      .replace(/\[REMEMBER:[^\]]+\]/gi, '')
       .replace(/\[SEND_EMAIL\][\s\S]*?\[\/SEND_EMAIL\]/i, '')
       .replace(/\[SEND_POST\][\s\S]*?\[\/SEND_POST\]/i, '')
       .replace(/\[SEND_OUTREACH\][\s\S]*?\[\/SEND_OUTREACH\]/i, '')
@@ -706,7 +783,11 @@ app.post('/locke/chat', async (req, res) => {
     ];
 
     const crossContext = await buildCrossContext(principal_id, 'locke');
-    const system = [{ type: 'text', text: LOCKE_SYSTEM, cache_control: { type: 'ephemeral' } }];
+    const memories = await loadAgentMemory('locke');
+    const memoryBlock = memories.length
+      ? '\n\n## YOUR MEMORY\n' + memories.map(m => `[${m.category}] ${m.content}`).join('\n')
+      : '';
+    const system = [{ type: 'text', text: LOCKE_SYSTEM + memoryBlock, cache_control: { type: 'ephemeral' } }];
     if (crossContext) system.push({ type: 'text', text: crossContext });
 
     const response = await anthropic.messages.create({
@@ -716,7 +797,10 @@ app.post('/locke/chat', async (req, res) => {
       messages
     });
 
-    const reply = response.content[0].text;
+    const rawLockeReply = response.content[0].text;
+    const lockeRememberBlocks = parseRememberBlocks(rawLockeReply);
+    if (lockeRememberBlocks.length) await writeAgentMemory('locke', lockeRememberBlocks).catch(() => {});
+    const reply = rawLockeReply.replace(/\[REMEMBER:[^\]]+\]/gi, '').trim();
 
     if (principal_id) {
       const { error: saveError } = await supabase.from('locke_conversations').insert([
@@ -960,9 +1044,12 @@ async function runPantheonSession(personas, triggerType, headline, sourceUrl, fo
       ? '\n\n—\n\n' + thread.map(t => `${t.name}: "${t.content}"`).join('\n\n') + '\n\nFrom your nature, speak.'
       : '\n\nSpeak.';
 
+    const voiceMemory = voice.memory
+      ? `\n\nYour prior statements in the chamber — maintain consistency with these positions:\n${voice.memory.split('\n---\n').map(s => `"${s}"`).join('\n')}`
+      : '';
     let content;
     try {
-      content = await callPersona(voice.system_prompt, baseContext + priorText);
+      content = await callPersona(voice.system_prompt + voiceMemory, baseContext + priorText);
     } catch (e) {
       console.error(`[Pantheon] ${voice.name} failed:`, e.message);
       content = '[This voice did not speak.]';
@@ -993,6 +1080,9 @@ async function runPantheonSession(personas, triggerType, headline, sourceUrl, fo
 
   await supabase.from('pantheon_feed_items')
     .insert([{ persona_id: thoth.id, content: thothClose, source_headline: sourceHeadline, source_url: sourceUrl || null, session_id: sid, in_response_to: lastItemId }]);
+
+  // Update each voice's memory with their statement from this session (non-blocking)
+  updatePersonaMemories(sid, voices, thread).catch(e => console.error('[Pantheon] Memory update failed:', e.message));
 
   return sid;
 }
@@ -1065,7 +1155,7 @@ async function handlePantheonTrigger(req, res) {
   try {
     const { data: personas, error: personaError } = await supabase
       .from('pantheon_personas')
-      .select('id, name, system_prompt')
+      .select('id, name, system_prompt, memory, session_count')
       .eq('is_active', true);
 
     if (personaError || !personas?.length) {
@@ -1255,7 +1345,7 @@ async function pantheonAutoTrigger() {
   try {
     const { data: personas } = await supabase
       .from('pantheon_personas')
-      .select('id, name, system_prompt')
+      .select('id, name, system_prompt, memory, session_count')
       .eq('is_active', true);
 
     if (!personas?.length) return console.log('[Pantheon] No active personas.');
