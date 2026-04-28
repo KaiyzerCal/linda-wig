@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Founding member &mdash; first 50 only</title>
+<style>
+  body { margin: 0; padding: 0; background: #0a0a0a; font-family: Georgia, 'Times New Roman', serif; }
+  .wrap { max-width: 600px; margin: 0 auto; padding: 48px 28px; }
+  .logo { font-family: 'Courier New', monospace; font-size: 11px; color: #555; letter-spacing: 4px; text-transform: uppercase; padding-bottom: 24px; border-bottom: 1px solid #222; margin-bottom: 24px; }
+  .scarcity { background: #150800; border: 1px solid #8B4513; padding: 13px 20px; margin: 0 0 36px; font-family: 'Courier New', monospace; font-size: 12px; color: #c4622a; letter-spacing: 2px; text-transform: uppercase; }
+  h1 { font-size: 27px; color: #f5f0e8; line-height: 1.35; margin: 0 0 28px; font-weight: normal; font-style: italic; }
+  p { font-size: 16px; color: #b8b0a0; line-height: 1.85; margin: 0 0 22px; }
+  .pull { border-left: 3px solid #8B4513; padding: 18px 26px; margin: 32px 0; background: #111; }
+  .pull p { font-size: 19px; color: #f0e8d8; font-style: italic; margin: 0; }
+  .offer { background: #111; border: 1px solid #8B4513; padding: 36px 32px; margin: 36px 0; border-radius: 3px; text-align: center; }
+  .was { font-size: 17px; color: #444; text-decoration: line-through; margin: 0 0 4px; font-family: 'Courier New', monospace; }
+  .price-line { font-family: 'Courier New', monospace; font-size: 52px; color: #f5f0e8; line-height: 1; margin: 0 0 6px; }
+  .price-sub { font-size: 13px; color: #666; margin: 0 0 28px; }
+  .cta { display: inline-block; background: #8B4513; color: #ffffff; text-decoration: none; padding: 16px 44px; font-family: 'Courier New', monospace; font-size: 14px; letter-spacing: 2px; border-radius: 2px; text-transform: uppercase; }
+  .cta-note { font-size: 12px; color: #555; margin: 14px 0 0; }
+  .includes { margin: 28px 0 0; text-align: left; }
+  .inc-row { font-size: 13px; color: #777; margin: 0 0 9px; display: flex; align-items: flex-start; }
+  .inc-check { color: #8B4513; min-width: 20px; }
+  .sig p { color: #888; font-size: 15px; margin: 0 0 4px; }
+  .footer { border-top: 1px solid #1a1a1a; padding-top: 24px; margin-top: 48px; }
+  .footer p { font-size: 11px; color: #444; line-height: 1.7; margin: 0; }
+  .footer a { color: #555; text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="logo">WIG &mdash; Watkins Investment Group</div>
+  <div class="scarcity">Founding Member Offer &mdash; First 50 Only &mdash; Closes When It Closes</div>
+
+  <h1>You are not starting from zero. You are starting from experience most people will never have.</h1>
+
+  <p>{{name}},</p>
+
+  <p>That line is written directly to the person walking out the gate with a bus ticket and forty dollars and a world that has already decided they are behind. It is also written to the person who loves them. And to anyone who has ever needed to hear that surviving the hardest chapter in a life is not a deficit &mdash; it is a credential.</p>
+
+  <div class="pull">
+    <p>&ldquo;You are not starting from zero. You are starting from experience most people will never have &mdash; and cannot replicate.&rdquo;</p>
+  </div>
+
+  <p>I am opening 50 founding member slots for <em>The Inmate Traveler's Guide</em>. These are for the people who have been in this conversation since the beginning &mdash; the ones already paying attention.</p>
+
+  <p>When this book starts moving through organizations, policy circles, reentry programs, and criminal justice reform communities, founding members were there first. That is real and it matters to me.</p>
+
+  <div class="offer">
+    <div class="was">$97 value</div>
+    <div class="price-line">$47</div>
+    <div class="price-sub">Founding member price &mdash; first 50 only</div>
+    <a href="{{INMATE_GUIDE_GUMROAD_URL}}" class="cta">Become a Founding Member</a>
+    <div class="cta-note">No countdown timer. Just the truth: once 50 are in, this closes.</div>
+    <div class="includes">
+      <div class="inc-row"><span class="inc-check">&#10003;&nbsp;</span><span>Paperback + digital bundle &mdash; complete edition</span></div>
+      <div class="inc-row"><span class="inc-check">&#10003;&nbsp;</span><span>&ldquo;What America Could Choose&rdquo; &mdash; full policy appendix</span></div>
+      <div class="inc-row"><span class="inc-check">&#10003;&nbsp;</span><span>&ldquo;A Note to the Returning&rdquo; &mdash; the page this book was built to contain</span></div>
+      <div class="inc-row"><span class="inc-check">&#10003;&nbsp;</span><span>Founding member acknowledgment</span></div>
+      <div class="inc-row"><span class="inc-check">&#10003;&nbsp;</span><span>First access to every WIG publication going forward</span></div>
+    </div>
+  </div>
+
+  <p>When this closes, the price goes up and founding member status closes permanently.</p>
+
+  <div class="sig">
+    <p>&mdash; Bishop Watkins</p>
+  </div>
+
+  <div class="footer">
+    <p>You are receiving this because you subscribed to updates from Bishop Watkins / WIG.<br>
+    To stop: reply with subject line <strong>UNSUBSCRIBE</strong> or email
+    <a href="mailto:{{unsubscribe_email}}?subject=UNSUBSCRIBE">{{unsubscribe_email}}</a>.</p>
+  </div>
+
+</div>
+</body>
+</html>
