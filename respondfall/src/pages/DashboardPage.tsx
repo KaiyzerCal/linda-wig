@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import ActivityTab from './dashboard/ActivityTab'
+import InboxTab from './dashboard/InboxTab'
 import SettingsTab from './dashboard/SettingsTab'
 import { useClientContext } from '@/contexts/ClientContext'
 
-type Tab = 'activity' | 'settings'
+type Tab = 'activity' | 'inbox' | 'settings'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'activity', label: 'Activity' },
+  { id: 'inbox',    label: 'Inbox' },
   { id: 'settings', label: 'Settings' },
 ]
 
@@ -21,12 +23,8 @@ export default function DashboardPage() {
         className="flex items-center gap-0 border-b border-gray-800 px-6 shrink-0"
         style={{ background: 'var(--surface)' }}
       >
-        {/* Client name breadcrumb */}
         {activeClient && (
-          <span
-            className="text-xs font-semibold mr-6 py-3"
-            style={{ color: '#6b7280' }}
-          >
+          <span className="text-xs font-semibold mr-6 py-3" style={{ color: '#6b7280' }}>
             {activeClient.business_name}
           </span>
         )}
@@ -49,9 +47,10 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* Tab content */}
-      <div className="flex-1 overflow-y-auto">
+      {/* Tab content — Inbox needs full height for split layout */}
+      <div className={`flex-1 ${tab === 'inbox' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
         {tab === 'activity' && <ActivityTab />}
+        {tab === 'inbox'    && <InboxTab />}
         {tab === 'settings' && <SettingsTab />}
       </div>
     </div>

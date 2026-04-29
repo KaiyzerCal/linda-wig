@@ -1,44 +1,38 @@
 // Twilio webhook edge function — handles all inbound Twilio events.
 //
-// Routes:
-//   POST  (CallSid present, no DialCallStatus) → initial call: return TwiML dial
-//   POST  (CallSid + DialCallStatus)            → dial result: missed call flow
-//   POST  (MessageSid present)                  → inbound SMS flow
+// Event routing:
+//   POST (MessageSid)                        → inbound SMS flow
+//   POST (CallSid, no DialCallStatus)        → initial voice call → TwiML dial
+//   POST (CallSid + DialCallStatus)          → dial result → missed call flow
 //
-// All secrets from process.env / Deno.env only.
+// All secrets read from Deno.env only.
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 // ── Twilio signature validation ───────────────────────────────────────────────
 async function validateSignature(
   authToken: string,
-  incomingSignature: string,
+  incoming: string,
   url: string,
   params: Record<string, string>,
 ): Promise<boolean> {
   const sorted = Object.keys(params).sort()
   let data = url
-  for (const key of sorted) data += key + params[key]
+  for (const k of sorted) data += k + params[k]
 
   const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(authToken),
-    { name: 'HMAC', hash: 'SHA-1' },
-    false,
-    ['sign'],
+    'raw', new TextEncoder().encode(authToken),
+    { name: 'HMAC', hash: 'SHA-1' }, false, ['sign'],
   )
-  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data))
+  const sig     = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data))
   const computed = btoa(String.fromCharCode(...new Uint8Array(sig)))
-  return computed === incomingSignature
+  return computed === incoming
 }
 
-// ── Twilio REST helpers ───────────────────────────────────────────────────────
+// ── Twilio send SMS ───────────────────────────────────────────────────────────
 async function sendSms(
-  accountSid: string,
-  authToken: string,
-  from: string,
-  to: string,
-  body: string,
+  accountSid: string, authToken: string,
+  from: string, to: string, body: string,
 ): Promise<string | null> {
   const res = await fetch(
     `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
@@ -51,38 +45,32 @@ async function sendSms(
       body: new URLSearchParams({ From: from, To: to, Body: body }).toString(),
     },
   )
-  if (!res.ok) {
-    console.error('sendSms failed:', await res.text())
-    return null
-  }
-  const data = await res.json()
-  return data.sid ?? null
+  if (!res.ok) { console.error('sendSms failed:', await res.text()); return null }
+  return ((await res.json()) as { sid?: string }).sid ?? null
 }
 
-// ── TwiML helpers ─────────────────────────────────────────────────────────────
-function twimlResponse(xml: string) {
-  return new Response(`<?xml version="1.0" encoding="UTF-8"?><Response>${xml}</Response>`, {
-    headers: { 'Content-Type': 'text/xml' },
-  })
+// ── TwiML response ────────────────────────────────────────────────────────────
+function twiml(xml: string) {
+  return new Response(
+    `<?xml version="1.0" encoding="UTF-8"?><Response>${xml}</Response>`,
+    { headers: { 'Content-Type': 'text/xml' } },
+  )
 }
 
-// ── Anthropic AI helper ───────────────────────────────────────────────────────
-interface AiResult {
-  intent: string
-  reply: string
-}
+// ── Anthropic AI — intent qualification ──────────────────────────────────────
+interface QualifyResult { intent: string; reply: string }
 
-async function runAiQualification(
+async function aiQualify(
   apiKey: string,
   businessName: string,
   industry: string,
   inboundMessage: string,
-): Promise<AiResult> {
+): Promise<QualifyResult> {
   const system =
-    `You are an SMS assistant for ${businessName}, a ${industry} company. ` +
-    `A potential customer texted. Categorize their intent as: quote, service, question, or other. ` +
-    `Keep the reply under 160 characters and friendly. ` +
-    `Respond ONLY with valid JSON: {"intent":"<category>","reply":"<text>"}`
+    `You are ${businessName} (${industry}). ` +
+    `A potential customer just texted. ` +
+    `Categorize their intent as quote, service, or question. ` +
+    `Reply ONLY with valid JSON: {"intent":"quote|service|question","reply":"<friendly SMS under 160 chars>"}`
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -92,27 +80,34 @@ async function runAiQualification(
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 200,
+      model: 'claude-sonnet-4-6',
+      max_tokens: 256,
       system,
       messages: [{ role: 'user', content: inboundMessage }],
     }),
   })
 
-  if (!res.ok) throw new Error(`Anthropic error: ${res.status}`)
-  const data = await res.json()
-  const text: string = data.content?.[0]?.text ?? ''
+  if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`)
+
+  const data   = await res.json()
+  const raw: string = data.content?.[0]?.text ?? ''
 
   try {
-    // Strip markdown code fences if present
-    const cleaned = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim()
-    return JSON.parse(cleaned) as AiResult
+    const cleaned = raw.replace(/```json?\n?/g, '').replace(/```/g, '').trim()
+    const parsed  = JSON.parse(cleaned) as QualifyResult
+    return {
+      intent: String(parsed.intent ?? 'question').toLowerCase(),
+      reply:  String(parsed.reply  ?? '').slice(0, 160),
+    }
   } catch {
-    return { intent: 'other', reply: text.slice(0, 160) }
+    // Graceful fallback — treat as question, use raw text as reply
+    console.warn('AI JSON parse failed, using raw text as reply')
+    return { intent: 'question', reply: raw.slice(0, 160) }
   }
 }
 
-async function runAiReply(
+// ── Anthropic AI — contextual reply ──────────────────────────────────────────
+async function aiReply(
   apiKey: string,
   businessName: string,
   industry: string,
@@ -121,8 +116,9 @@ async function runAiReply(
 ): Promise<string> {
   const system =
     `You are an SMS assistant for ${businessName}, a ${industry} company. ` +
-    `Customer intent: ${intent}. Reply helpfully in under 160 characters. ` +
-    `No JSON — just the reply text.`
+    `The customer's intent is: ${intent}. ` +
+    `Reply helpfully and naturally in under 160 characters. ` +
+    `No JSON — reply text only.`
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -132,42 +128,36 @@ async function runAiReply(
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-6',
       max_tokens: 160,
       system,
       messages: [{ role: 'user', content: inboundMessage }],
     }),
   })
 
-  if (!res.ok) throw new Error(`Anthropic reply error: ${res.status}`)
+  if (!res.ok) throw new Error(`Anthropic reply ${res.status}`)
   const data = await res.json()
-  return (data.content?.[0]?.text ?? '').slice(0, 160)
+  return String(data.content?.[0]?.text ?? '').slice(0, 160)
 }
 
-// ── Blackout check ────────────────────────────────────────────────────────────
-function isInBlackout(blackoutStart: string | null, blackoutEnd: string | null): boolean {
-  if (!blackoutStart || !blackoutEnd) return false
-
-  const now   = new Date()
+// ── Blackout window check (UTC times) ────────────────────────────────────────
+function inBlackout(start: string | null, end: string | null): boolean {
+  if (!start || !end) return false
   const hhmm  = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
+  const now   = new Date()
   const cur   = now.getUTCHours() * 60 + now.getUTCMinutes()
-  const start = hhmm(blackoutStart)
-  const end   = hhmm(blackoutEnd)
-
-  // Overnight window (e.g. 21:00 → 08:00)
-  return start > end ? (cur >= start || cur < end) : (cur >= start && cur < end)
+  const s     = hhmm(start)
+  const e     = hhmm(end)
+  return s > e ? cur >= s || cur < e : cur >= s && cur < e
 }
 
-// ── Render SMS template ───────────────────────────────────────────────────────
-function renderTemplate(
-  template: string | null,
-  vars: Record<string, string>,
-): string {
-  const tpl =
-    template ||
-    'Hi! This is {business_name}. We missed your call — we\'d love to help! ' +
+// ── SMS template renderer ─────────────────────────────────────────────────────
+function renderTemplate(tpl: string | null, vars: Record<string, string>): string {
+  const base =
+    tpl ||
+    "Hi! This is {business_name}. We missed your call — we'd love to help! " +
     'Reply here or book online: {booking_link}'
-  return tpl.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`)
+  return base.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`)
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
@@ -179,132 +169,160 @@ serve(async (req: Request) => {
   const anthropicKey   = Deno.env.get('ANTHROPIC_API_KEY')
 
   if (!accountSid || !authToken || !supabaseUrl || !serviceRoleKey || !anthropicKey) {
-    console.error('Missing required environment variables')
+    console.error('Missing required env vars')
     return new Response('Server misconfigured', { status: 500 })
   }
 
-  // Parse form body
   const bodyText = await req.text()
   const params   = Object.fromEntries(new URLSearchParams(bodyText).entries())
 
-  // Validate Twilio signature
-  const signature = req.headers.get('X-Twilio-Signature') ?? ''
-  const url       = req.url
-  const valid     = await validateSignature(authToken, signature, url, params)
+  // Signature validation
+  const sig   = req.headers.get('X-Twilio-Signature') ?? ''
+  const valid = await validateSignature(authToken, sig, req.url, params)
   if (!valid) {
-    console.warn('Invalid Twilio signature from', req.headers.get('x-forwarded-for'))
+    console.warn('Invalid Twilio signature')
     return new Response('Forbidden', { status: 403 })
   }
 
   const db = createClient(supabaseUrl, serviceRoleKey)
 
-  // ── Route: Inbound SMS ───────────────────────────────────────────────────────
+  // ════════════════════════════════════════════════════════════════════════════
+  // INBOUND SMS
+  // ════════════════════════════════════════════════════════════════════════════
   if (params.MessageSid) {
-    const from      = params.From
-    const to        = params.To       // our Twilio number
-    const body      = (params.Body ?? '').trim()
+    const from    = params.From
+    const to      = params.To
+    const msgBody = (params.Body ?? '').trim()
 
-    // Find client by respondfall_number
     const { data: client } = await db
       .from('clients')
-      .select('*, agency_owners(name)')
+      .select('*')
       .eq('respondfall_number', to)
       .single()
 
-    if (!client) {
-      console.warn('No client found for number', to)
-      return twimlResponse('')
-    }
-
-    if (!client.system_active) return twimlResponse('')
+    if (!client || !client.system_active) return twiml('')
 
     // Insert inbound message
     await db.from('messages').insert({
       client_id:          client.id,
       caller_number:      from,
       direction:          'inbound',
-      body,
+      body:               msgBody,
       twilio_message_sid: params.MessageSid,
       message_type:       'sms',
       ai_generated:       false,
       status:             'received',
     })
 
-    // Update conversation last_message_at
-    await db.from('conversations')
-      .upsert(
-        { client_id: client.id, caller_number: from, last_message_at: new Date().toISOString() },
-        { onConflict: 'client_id,caller_number', ignoreDuplicates: false },
-      )
+    // Upsert conversation timestamp
+    await db.from('conversations').upsert(
+      { client_id: client.id, caller_number: from, last_message_at: new Date().toISOString() },
+      { onConflict: 'client_id,caller_number', ignoreDuplicates: false },
+    )
 
     // STOP keyword → opt out
-    if (/^(stop|unsubscribe|cancel|quit|end)$/i.test(body)) {
+    if (/^(stop|unsubscribe|cancel|quit|end)$/i.test(msgBody)) {
       await db.from('opt_outs').upsert(
         { client_id: client.id, phone_number: from },
         { onConflict: 'client_id,phone_number', ignoreDuplicates: true },
       )
       await db.from('conversations')
         .update({ status: 'opted_out', opted_out: true, sequence_paused: true })
-        .eq('client_id', client.id)
-        .eq('caller_number', from)
+        .eq('client_id', client.id).eq('caller_number', from)
 
-      await sendSms(
-        accountSid, authToken, to, from,
-        'You have been unsubscribed and will receive no further messages.',
-      )
-      return twimlResponse('')
+      await sendSms(accountSid, authToken, to, from,
+        'You have been unsubscribed and will receive no further messages.')
+      return twiml('')
     }
 
     // Check opt-out
-    const { data: optOut } = await db
-      .from('opt_outs')
-      .select('id')
-      .eq('client_id', client.id)
-      .eq('phone_number', from)
-      .maybeSingle()
+    const { data: optOut } = await db.from('opt_outs').select('id')
+      .eq('client_id', client.id).eq('phone_number', from).maybeSingle()
+    if (optOut) return twiml('')
 
-    if (optOut) return twimlResponse('')
+    // Fetch conversation state
+    const { data: convo } = await db.from('conversations')
+      .select('intent, sequence_paused, status')
+      .eq('client_id', client.id).eq('caller_number', from).maybeSingle()
 
-    // Get conversation intent
-    const { data: convo } = await db
-      .from('conversations')
-      .select('intent, sequence_paused')
-      .eq('client_id', client.id)
-      .eq('caller_number', from)
-      .maybeSingle()
+    // Check if last outbound was a referral request — if so, treat reply as a referral name
+    const { data: lastReferralMsg } = await db.from('messages')
+      .select('id, created_at')
+      .eq('client_id', client.id).eq('caller_number', from)
+      .eq('direction', 'outbound').eq('message_type', 'referral').eq('status', 'sent')
+      .order('created_at', { ascending: false }).limit(1).maybeSingle()
+
+    if (lastReferralMsg) {
+      // Any inbound after a sent referral message = referral name reply
+      const supabaseFnUrl = `${supabaseUrl}/functions/v1/send-referral`
+      fetch(supabaseFnUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${serviceRoleKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          mode:         'process_reply',
+          clientId:     client.id,
+          callerNumber: from,
+          referredName: msgBody,
+        }),
+      }).catch(e => console.error('send-referral call failed:', e))
+      return twiml('')
+    }
 
     let replyText: string
     let aiGenerated = true
+    let intentToSet: string | null = null
 
     try {
       if (!convo?.intent) {
-        // First reply — qualify intent
-        const result = await runAiQualification(
+        // ── No intent yet — full qualification ──────────────────────────────
+        const result = await aiQualify(
           anthropicKey,
           client.business_name,
           client.industry ?? 'service',
-          body,
+          msgBody,
         )
-        replyText = result.reply
 
+        intentToSet = result.intent
+        replyText   = result.reply
+
+        // Append booking link for quote or service intents
+        if (['quote', 'service'].includes(result.intent) && client.booking_link) {
+          const linkSuffix = ` Book now: ${client.booking_link}`
+          if ((replyText + linkSuffix).length <= 160) {
+            replyText = replyText + linkSuffix
+          }
+        }
+
+        // Notify owner via SMS if intent is a question (not a booking-ready lead)
+        if (result.intent === 'question' && client.business_phone) {
+          const ownerAlert =
+            `Respondfall: New question from ${from} for ${client.business_name}: "${msgBody.slice(0, 80)}"`
+          sendSms(accountSid, authToken, to, client.business_phone, ownerAlert)
+            .catch(e => console.error('Owner alert failed:', e))
+        }
+
+        // Update conversation intent
         await db.from('conversations')
           .update({ intent: result.intent, sequence_paused: true })
-          .eq('client_id', client.id)
-          .eq('caller_number', from)
+          .eq('client_id', client.id).eq('caller_number', from)
+
       } else {
-        // Intent known — AI contextual reply
-        replyText = await runAiReply(
+        // ── Intent known — contextual AI reply ──────────────────────────────
+        replyText = await aiReply(
           anthropicKey,
           client.business_name,
           client.industry ?? 'service',
           convo.intent,
-          body,
+          msgBody,
         )
       }
     } catch (e) {
       console.error('AI error:', e)
-      replyText = `Thanks for reaching out to ${client.business_name}! We'll be in touch shortly.`
-      aiGenerated = false
+      replyText    = `Thanks for reaching out to ${client.business_name}! We'll be in touch shortly.`
+      aiGenerated  = false
     }
 
     const sid = await sendSms(accountSid, authToken, to, from, replyText)
@@ -317,95 +335,79 @@ serve(async (req: Request) => {
       twilio_message_sid: sid,
       message_type:       'sms',
       ai_generated:       aiGenerated,
-      status:             'sent',
+      status:             sid ? 'sent' : 'failed',
     })
 
-    return twimlResponse('')
+    return twiml('')
   }
 
-  // ── Route: Incoming voice call (initial) ─────────────────────────────────────
+  // ════════════════════════════════════════════════════════════════════════════
+  // INCOMING VOICE CALL — return TwiML to forward to business
+  // ════════════════════════════════════════════════════════════════════════════
   if (params.CallSid && !params.DialCallStatus) {
     const to = params.To
 
-    const { data: client } = await db
-      .from('clients')
+    const { data: client } = await db.from('clients')
       .select('business_phone, business_name')
-      .eq('respondfall_number', to)
-      .single()
+      .eq('respondfall_number', to).single()
 
     if (!client?.business_phone) {
-      return twimlResponse('<Say>Sorry, this number is not configured. Goodbye.</Say><Hangup/>')
+      return twiml('<Say>Sorry, this number is unavailable. Goodbye.</Say><Hangup/>')
     }
 
-    // Dial the real business number; action fires when dial completes
     const actionUrl = `${req.url.split('?')[0]}?event=dial_result`
-    return twimlResponse(
+    return twiml(
       `<Dial action="${actionUrl}" method="POST" timeout="20" callerId="${to}">` +
         `<Number>${client.business_phone}</Number>` +
       `</Dial>`,
     )
   }
 
-  // ── Route: Dial result (missed call detection) ────────────────────────────────
+  // ════════════════════════════════════════════════════════════════════════════
+  // DIAL RESULT — missed call detection and SMS recovery
+  // ════════════════════════════════════════════════════════════════════════════
   if (params.CallSid && params.DialCallStatus) {
-    const dialStatus = params.DialCallStatus // no-answer | busy | failed | completed
+    const dialStatus = params.DialCallStatus
     const from       = params.From
     const to         = params.To
     const callSid    = params.CallSid
 
-    // Only trigger SMS recovery for missed calls
     if (!['no-answer', 'busy', 'failed'].includes(dialStatus)) {
-      return twimlResponse('<Hangup/>')
+      return twiml('<Hangup/>')
     }
 
-    const { data: client } = await db
-      .from('clients')
-      .select('*')
-      .eq('respondfall_number', to)
-      .single()
+    const { data: client } = await db.from('clients').select('*')
+      .eq('respondfall_number', to).single()
 
-    if (!client || !client.system_active) return twimlResponse('<Hangup/>')
+    if (!client || !client.system_active) return twiml('<Hangup/>')
 
-    // Check opt-out
-    const { data: optOut } = await db
-      .from('opt_outs')
-      .select('id')
-      .eq('client_id', client.id)
-      .eq('phone_number', from)
-      .maybeSingle()
+    // Opt-out check
+    const { data: optOut } = await db.from('opt_outs').select('id')
+      .eq('client_id', client.id).eq('phone_number', from).maybeSingle()
+    if (optOut) return twiml('<Hangup/>')
 
-    if (optOut) return twimlResponse('<Hangup/>')
-
-    // Check blackout
-    if (isInBlackout(client.blackout_start, client.blackout_end)) {
+    // Blackout check
+    if (inBlackout(client.blackout_start, client.blackout_end)) {
       console.log('Blackout active — skipping SMS for', from)
-      return twimlResponse('<Hangup/>')
+      return twiml('<Hangup/>')
     }
 
-    // Prevent duplicate processing for same call
-    const { data: existing } = await db
-      .from('missed_calls')
-      .select('id')
-      .eq('call_sid', callSid)
-      .maybeSingle()
+    // Dedup by call_sid
+    const { data: existing } = await db.from('missed_calls').select('id')
+      .eq('call_sid', callSid).maybeSingle()
+    if (existing) return twiml('<Hangup/>')
 
-    if (existing) return twimlResponse('<Hangup/>')
-
-    // Record missed call
+    // Record missed call + upsert conversation
     await db.from('missed_calls').insert({
-      client_id:  client.id,
-      caller_number: from,
-      call_sid:   callSid,
-      sequence_triggered: false,
+      client_id: client.id, caller_number: from,
+      call_sid: callSid, sequence_triggered: false,
     })
-
-    // Upsert conversation
     await db.from('conversations').upsert(
       { client_id: client.id, caller_number: from, last_message_at: new Date().toISOString() },
       { onConflict: 'client_id,caller_number', ignoreDuplicates: false },
     )
 
-    // Wait send_delay then fire Step 1 SMS
+    // Wait send_delay, then fire Step 1
     const delay = Math.min((client.send_delay_seconds ?? 30) * 1000, 120_000)
     await new Promise(r => setTimeout(r, delay))
 
@@ -417,41 +419,29 @@ serve(async (req: Request) => {
     const step1Sid = await sendSms(accountSid, authToken, to, from, step1Body)
 
     await db.from('messages').insert({
-      client_id:          client.id,
-      caller_number:      from,
-      direction:          'outbound',
-      body:               step1Body,
-      twilio_message_sid: step1Sid,
-      sequence_step:      1,
-      message_type:       'sms',
-      ai_generated:       false,
-      status:             'sent',
+      client_id: client.id, caller_number: from,
+      direction: 'outbound', body: step1Body,
+      twilio_message_sid: step1Sid, sequence_step: 1,
+      message_type: 'sms', ai_generated: false,
+      status: step1Sid ? 'sent' : 'failed',
     })
 
-    // Mark missed call as sequence triggered
-    await db.from('missed_calls')
-      .update({ sequence_triggered: true })
-      .eq('call_sid', callSid)
+    await db.from('missed_calls').update({ sequence_triggered: true }).eq('call_sid', callSid)
 
-    // Schedule Step 2 (30 min later) — picked up by process-scheduled function
-    const step2At = new Date(Date.now() + 30 * 60 * 1000).toISOString()
+    // Schedule Step 2 at +30 min
     const step2Body =
       `Following up from ${client.business_name}! Still need help? ` +
       `Reply YES and we'll reach out right away.`
 
     await db.from('messages').insert({
-      client_id:     client.id,
-      caller_number: from,
-      direction:     'outbound',
-      body:          step2Body,
-      sequence_step: 2,
-      message_type:  'sms',
-      ai_generated:  false,
-      status:        'scheduled',
-      scheduled_at:  step2At,
+      client_id: client.id, caller_number: from,
+      direction: 'outbound', body: step2Body,
+      sequence_step: 2, message_type: 'sms',
+      ai_generated: false, status: 'scheduled',
+      scheduled_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     })
 
-    return twimlResponse('<Hangup/>')
+    return twiml('<Hangup/>')
   }
 
   return new Response('Unrecognized event', { status: 400 })
