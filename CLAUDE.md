@@ -11,7 +11,7 @@ You are Claude Code operating as **Linda's technical execution environment**. Li
 Your relationship to Linda:
 - Linda receives missions from Bishop and translates them into technical requirements
 - Those requirements arrive in your build queue via Supabase
-- You build what's in the queue, mark it complete, and Linda deploys it via Zapier
+- You build what's in the queue, mark it complete, and Linda deploys it via n8n
 - You are also Calvin's direct environment — Calvin can talk to you and you can talk to Linda's API
 
 Your relationship to Calvin:
@@ -73,7 +73,8 @@ Server runs at `http://localhost:3000` after `npm start`.
 | `/linda/lineage` | POST/GET | Family archive |
 | `/linda/book-ops` | GET | Book operations log |
 | `/linda/agent-report` | POST | Agent status update |
-| `/linda/zapier/webhook` | POST | Receive from Zapier |
+| `/linda/n8n/webhook` | POST | Receive callbacks from n8n |
+| `/linda/n8n-status` | GET | Check if n8n is online |
 | `/linda/health` | GET | Status check |
 
 ---
@@ -89,9 +90,13 @@ SUPABASE_SERVICE_KEY=     # service_role key from Supabase
 BISHOP_UUID=              # from principals table after schema runs
 CALVIN_UUID=              # from principals table after schema runs
 PORT=3000
-ZAPIER_EMAIL_WEBHOOK=     # from Zapier catch hook
-ZAPIER_SOCIAL_WEBHOOK=    # from Zapier catch hook
-ZAPIER_OUTREACH_WEBHOOK=  # from Zapier catch hook
+SLACK_WEBHOOK_URL=        # optional Slack notifications
+N8N_URL=                  # internal n8n URL (e.g. http://n8n:5678)
+N8N_WEBHOOK_URL=          # public-facing n8n URL on Railway
+N8N_BASIC_AUTH_USER=      # n8n dashboard login
+N8N_BASIC_AUTH_PASSWORD=  # n8n dashboard password
+SUPABASE_DB_HOST=         # Supabase Postgres host (for n8n DB connection)
+SUPABASE_DB_PASSWORD=     # Supabase Postgres password
 ```
 
 ---
@@ -105,15 +110,20 @@ npm start       # Linda is operational at http://localhost:3000
 
 ---
 
-## ZAPIER CONNECTIONS
+## N8N CONNECTIONS
 
-Create 3 Zaps — each using **Webhooks by Zapier — Catch Hook** as trigger:
+Linda uses n8n as her action layer. n8n runs as a separate service (Docker or Railway).
 
-1. **Linda Email** → `ZAPIER_EMAIL_WEBHOOK` → Gmail send
-2. **Linda Social** → `ZAPIER_SOCIAL_WEBHOOK` → Buffer or direct social
-3. **Linda Outreach** → `ZAPIER_OUTREACH_WEBHOOK` → Email + log to Sheets
+Three workflows handle Linda's outbound actions:
 
-Optional 4th Zap: Supabase new row in `missions` → SMS or Slack to Bishop
+1. **Linda Email** → `/webhook/linda-email` → Gmail node → logs to `book_ops`
+2. **Linda Social** → `/webhook/linda-social` → Buffer node → logs to `book_ops`
+3. **Linda Outreach** → `/webhook/linda-outreach` → Email + Google Sheets → logs to `book_ops`
+
+Import workflow templates from `/n8n-workflows/linda-workflows.json` into your n8n instance.
+Connect Gmail, Buffer, and Google Sheets nodes with your credentials inside n8n.
+
+After deployment: access n8n at the Railway URL, log in with `N8N_BASIC_AUTH_USER` / `N8N_BASIC_AUTH_PASSWORD`, activate all three workflows.
 
 ---
 

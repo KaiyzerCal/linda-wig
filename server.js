@@ -6,7 +6,6 @@ const { createClient } = require('@supabase/supabase-js');
 const path = require('path');
 const fs = require('fs');
 const Stripe = require('stripe');
-const nodemailer = require('nodemailer');
 
 const app = express();
 app.use(cors());
@@ -17,33 +16,26 @@ app.use('/pantheon/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname)));
 
-const ZAPIER_SOCIAL_WEBHOOK = process.env.ZAPIER_SOCIAL_WEBHOOK || '';
-const SLACK_WEBHOOK_URL     = process.env.SLACK_WEBHOOK_URL     || '';
-
-const mailTransporter = (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD)
-  ? nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD }
-    })
-  : null;
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'http://localhost:5678';
+const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || '';
 
 async function fireEmail(to, subject, body) {
-  if (!mailTransporter) throw new Error('GMAIL_USER / GMAIL_APP_PASSWORD not configured');
-  await mailTransporter.sendMail({
-    from: `Linda — WIG <${process.env.GMAIL_USER}>`,
-    to, subject, text: body
+  const res = await fetch(`${N8N_WEBHOOK_URL}/webhook/linda-email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to, subject, body })
   });
+  if (!res.ok) throw new Error(`n8n responded ${res.status}`);
   return true;
 }
 
 async function fireSocial(content, platform) {
-  if (!ZAPIER_SOCIAL_WEBHOOK) throw new Error('ZAPIER_SOCIAL_WEBHOOK not configured');
-  const res = await fetch(ZAPIER_SOCIAL_WEBHOOK, {
+  const res = await fetch(`${N8N_WEBHOOK_URL}/webhook/linda-social`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content, platform: platform || 'all' })
   });
-  if (!res.ok) throw new Error(`Zapier responded ${res.status}`);
+  if (!res.ok) throw new Error(`n8n responded ${res.status}`);
   return true;
 }
 
@@ -71,12 +63,12 @@ function parseSocialAction(text) {
 }
 
 async function fireOutreach(to, subject, body, contact_name, notes) {
-  if (!mailTransporter) throw new Error('GMAIL_USER / GMAIL_APP_PASSWORD not configured');
-  const notesSuffix = notes ? `\n\n---\nOutreach note: ${notes}` : '';
-  await mailTransporter.sendMail({
-    from: `Linda — WIG <${process.env.GMAIL_USER}>`,
-    to, subject, text: body + notesSuffix
+  const res = await fetch(`${N8N_WEBHOOK_URL}/webhook/linda-outreach`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to, subject, body, contact_name, notes, campaign_name: contact_name || 'general' })
   });
+  if (!res.ok) throw new Error(`n8n responded ${res.status}`);
   return true;
 }
 
@@ -861,19 +853,37 @@ app.post('/linda/agent-report', async (req, res) => {
   }
 });
 
-// Zapier webhook
-app.post('/linda/zapier/webhook', async (req, res) => {
+// n8n webhook receiver (receives callbacks from n8n workflows)
+app.post('/linda/n8n/webhook', async (req, res) => {
   try {
     const payload = req.body;
-    console.log('[Zapier]', JSON.stringify(payload));
+    console.log('[n8n]', JSON.stringify(payload));
     await supabase.from('book_ops').insert([{
-      operation: 'zapier_webhook',
+      operation: 'n8n_webhook',
       details: payload,
       status: 'received'
     }]);
     res.json({ received: true, timestamp: new Date().toISOString() });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// n8n status check
+app.get('/linda/n8n-status', async (req, res) => {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const check = await fetch(`${N8N_WEBHOOK_URL}/healthz`, { signal: controller.signal }).catch(() => null);
+    clearTimeout(timeout);
+    const online = check?.ok ?? false;
+    res.json({
+      status: online ? 'online' : 'offline',
+      n8n_url: N8N_WEBHOOK_URL,
+      checked_at: new Date().toISOString()
+    });
+  } catch (err) {
+    res.json({ status: 'offline', n8n_url: N8N_WEBHOOK_URL, error: err.message, checked_at: new Date().toISOString() });
   }
 });
 
@@ -1237,7 +1247,7 @@ app.listen(PORT, () => {
 });
 
 // ─── PANTHEON AUTO-TRIGGER ────────────────────────────────────────────────────
-// Runs every 90 minutes. No console, no edge functions, no external scheduler.
+// Runs every 6 hours (cron: 0 */6 * * *). No console, no edge functions, no external scheduler.
 
 async function pantheonAutoTrigger() {
   console.log('[Pantheon] Auto-trigger fired.');
@@ -1293,4 +1303,4 @@ async function pantheonAutoTrigger() {
   }
 }
 
-setInterval(pantheonAutoTrigger, 90 * 60 * 1000); // every 90 minutes
+setInterval(pantheonAutoTrigger, 6 * 60 * 60 * 1000); // every 6 hours (cron: 0 */6 * * *)

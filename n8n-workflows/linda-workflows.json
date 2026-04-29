@@ -1,0 +1,299 @@
+{
+  "meta": {
+    "instanceId": "linda-wig",
+    "templateCredsSetupCompleted": false
+  },
+  "workflows": [
+    {
+      "id": "linda-email",
+      "name": "Linda Email",
+      "active": false,
+      "nodes": [
+        {
+          "parameters": {
+            "httpMethod": "POST",
+            "path": "linda-email",
+            "responseMode": "lastNode",
+            "options": {}
+          },
+          "id": "webhook-email",
+          "name": "Webhook",
+          "type": "n8n-nodes-base.webhook",
+          "typeVersion": 1,
+          "position": [240, 300],
+          "webhookId": "linda-email"
+        },
+        {
+          "parameters": {
+            "sendTo": "={{ $json.body.to }}",
+            "subject": "={{ $json.body.subject }}",
+            "emailType": "text",
+            "message": "={{ $json.body.body }}",
+            "options": {
+              "fromEmail": "Linda — WIG <your-email@gmail.com>"
+            }
+          },
+          "id": "gmail-send",
+          "name": "Send Email",
+          "type": "n8n-nodes-base.gmail",
+          "typeVersion": 2,
+          "position": [460, 300],
+          "credentials": {
+            "gmailOAuth2": {
+              "id": "gmail-creds",
+              "name": "Gmail — WIG"
+            }
+          }
+        },
+        {
+          "parameters": {
+            "operation": "create",
+            "tableId": "book_ops",
+            "dataToSend": "defineBelow",
+            "fieldsUi": {
+              "fieldValues": [
+                { "fieldId": "operation", "fieldValue": "email_sent" },
+                { "fieldId": "details", "fieldValue": "={{ JSON.stringify({ to: $('Webhook').item.json.body.to, subject: $('Webhook').item.json.body.subject }) }}" },
+                { "fieldId": "status", "fieldValue": "sent" }
+              ]
+            }
+          },
+          "id": "supabase-log-email",
+          "name": "Log to Supabase",
+          "type": "n8n-nodes-base.supabase",
+          "typeVersion": 1,
+          "position": [680, 300],
+          "credentials": {
+            "supabaseApi": {
+              "id": "supabase-creds",
+              "name": "Supabase — WIG"
+            }
+          }
+        },
+        {
+          "parameters": {
+            "respondWith": "json",
+            "responseBody": "={{ JSON.stringify({ success: true, operation: 'email_sent', to: $('Webhook').item.json.body.to }) }}"
+          },
+          "id": "respond-email",
+          "name": "Respond",
+          "type": "n8n-nodes-base.respondToWebhook",
+          "typeVersion": 1,
+          "position": [900, 300]
+        }
+      ],
+      "connections": {
+        "Webhook": { "main": [[{ "node": "Send Email", "type": "main", "index": 0 }]] },
+        "Send Email": { "main": [[{ "node": "Log to Supabase", "type": "main", "index": 0 }]] },
+        "Log to Supabase": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+      },
+      "settings": { "executionOrder": "v1" },
+      "tags": [{ "name": "linda" }]
+    },
+    {
+      "id": "linda-social",
+      "name": "Linda Social",
+      "active": false,
+      "nodes": [
+        {
+          "parameters": {
+            "httpMethod": "POST",
+            "path": "linda-social",
+            "responseMode": "lastNode",
+            "options": {}
+          },
+          "id": "webhook-social",
+          "name": "Webhook",
+          "type": "n8n-nodes-base.webhook",
+          "typeVersion": 1,
+          "position": [240, 300],
+          "webhookId": "linda-social"
+        },
+        {
+          "parameters": {
+            "profileIds": [],
+            "text": "={{ $json.body.content }}",
+            "scheduledAt": "={{ $json.body.scheduled_time || '' }}"
+          },
+          "id": "buffer-post",
+          "name": "Post via Buffer",
+          "type": "n8n-nodes-base.buffer",
+          "typeVersion": 1,
+          "position": [460, 300],
+          "credentials": {
+            "bufferOAuth2Api": {
+              "id": "buffer-creds",
+              "name": "Buffer — WIG"
+            }
+          }
+        },
+        {
+          "parameters": {
+            "operation": "create",
+            "tableId": "book_ops",
+            "dataToSend": "defineBelow",
+            "fieldsUi": {
+              "fieldValues": [
+                { "fieldId": "operation", "fieldValue": "social_posted" },
+                { "fieldId": "details", "fieldValue": "={{ JSON.stringify({ platform: $('Webhook').item.json.body.platform, content_preview: $('Webhook').item.json.body.content.substring(0, 100) }) }}" },
+                { "fieldId": "status", "fieldValue": "posted" }
+              ]
+            }
+          },
+          "id": "supabase-log-social",
+          "name": "Log to Supabase",
+          "type": "n8n-nodes-base.supabase",
+          "typeVersion": 1,
+          "position": [680, 300],
+          "credentials": {
+            "supabaseApi": {
+              "id": "supabase-creds",
+              "name": "Supabase — WIG"
+            }
+          }
+        },
+        {
+          "parameters": {
+            "respondWith": "json",
+            "responseBody": "={{ JSON.stringify({ success: true, operation: 'social_posted', platform: $('Webhook').item.json.body.platform }) }}"
+          },
+          "id": "respond-social",
+          "name": "Respond",
+          "type": "n8n-nodes-base.respondToWebhook",
+          "typeVersion": 1,
+          "position": [900, 300]
+        }
+      ],
+      "connections": {
+        "Webhook": { "main": [[{ "node": "Post via Buffer", "type": "main", "index": 0 }]] },
+        "Post via Buffer": { "main": [[{ "node": "Log to Supabase", "type": "main", "index": 0 }]] },
+        "Log to Supabase": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+      },
+      "settings": { "executionOrder": "v1" },
+      "tags": [{ "name": "linda" }]
+    },
+    {
+      "id": "linda-outreach",
+      "name": "Linda Outreach",
+      "active": false,
+      "nodes": [
+        {
+          "parameters": {
+            "httpMethod": "POST",
+            "path": "linda-outreach",
+            "responseMode": "lastNode",
+            "options": {}
+          },
+          "id": "webhook-outreach",
+          "name": "Webhook",
+          "type": "n8n-nodes-base.webhook",
+          "typeVersion": 1,
+          "position": [240, 300],
+          "webhookId": "linda-outreach"
+        },
+        {
+          "parameters": {
+            "sendTo": "={{ $json.body.to }}",
+            "subject": "={{ $json.body.subject }}",
+            "emailType": "text",
+            "message": "={{ $json.body.body }}",
+            "options": {
+              "fromEmail": "Linda — WIG <your-email@gmail.com>"
+            }
+          },
+          "id": "gmail-outreach",
+          "name": "Send Outreach Email",
+          "type": "n8n-nodes-base.gmail",
+          "typeVersion": 2,
+          "position": [460, 200],
+          "credentials": {
+            "gmailOAuth2": {
+              "id": "gmail-creds",
+              "name": "Gmail — WIG"
+            }
+          }
+        },
+        {
+          "parameters": {
+            "operation": "append",
+            "documentId": { "value": "YOUR_GOOGLE_SHEET_ID" },
+            "sheetName": "Outreach Log",
+            "columns": {
+              "mappingMode": "defineBelow",
+              "value": {
+                "Date": "={{ new Date().toISOString() }}",
+                "To": "={{ $('Webhook').item.json.body.to }}",
+                "Contact Name": "={{ $('Webhook').item.json.body.contact_name }}",
+                "Campaign": "={{ $('Webhook').item.json.body.campaign_name }}",
+                "Subject": "={{ $('Webhook').item.json.body.subject }}",
+                "Notes": "={{ $('Webhook').item.json.body.notes }}"
+              }
+            }
+          },
+          "id": "sheets-log",
+          "name": "Log to Google Sheets",
+          "type": "n8n-nodes-base.googleSheets",
+          "typeVersion": 4,
+          "position": [460, 400],
+          "credentials": {
+            "googleSheetsOAuth2Api": {
+              "id": "sheets-creds",
+              "name": "Google Sheets — WIG"
+            }
+          }
+        },
+        {
+          "parameters": {
+            "operation": "create",
+            "tableId": "book_ops",
+            "dataToSend": "defineBelow",
+            "fieldsUi": {
+              "fieldValues": [
+                { "fieldId": "operation", "fieldValue": "outreach_sent" },
+                { "fieldId": "details", "fieldValue": "={{ JSON.stringify({ to: $('Webhook').item.json.body.to, contact_name: $('Webhook').item.json.body.contact_name, campaign: $('Webhook').item.json.body.campaign_name }) }}" },
+                { "fieldId": "status", "fieldValue": "sent" }
+              ]
+            }
+          },
+          "id": "supabase-log-outreach",
+          "name": "Log to Supabase",
+          "type": "n8n-nodes-base.supabase",
+          "typeVersion": 1,
+          "position": [680, 300],
+          "credentials": {
+            "supabaseApi": {
+              "id": "supabase-creds",
+              "name": "Supabase — WIG"
+            }
+          }
+        },
+        {
+          "parameters": {
+            "respondWith": "json",
+            "responseBody": "={{ JSON.stringify({ success: true, operation: 'outreach_sent', to: $('Webhook').item.json.body.to, contact_name: $('Webhook').item.json.body.contact_name }) }}"
+          },
+          "id": "respond-outreach",
+          "name": "Respond",
+          "type": "n8n-nodes-base.respondToWebhook",
+          "typeVersion": 1,
+          "position": [900, 300]
+        }
+      ],
+      "connections": {
+        "Webhook": {
+          "main": [
+            [
+              { "node": "Send Outreach Email", "type": "main", "index": 0 },
+              { "node": "Log to Google Sheets", "type": "main", "index": 0 }
+            ]
+          ]
+        },
+        "Send Outreach Email": { "main": [[{ "node": "Log to Supabase", "type": "main", "index": 0 }]] },
+        "Log to Google Sheets": { "main": [[{ "node": "Log to Supabase", "type": "main", "index": 0 }]] },
+        "Log to Supabase": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+      },
+      "settings": { "executionOrder": "v1" },
+      "tags": [{ "name": "linda" }]
+    }
+  ]
+}

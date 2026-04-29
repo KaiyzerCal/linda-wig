@@ -76,3 +76,12 @@ CREATE TABLE IF NOT EXISTS agent_reports (
 
 -- After running, grab UUIDs for .env:
 -- SELECT id, name, role FROM principals;
+
+-- Pantheon ingest schedule (pg_cron — enable the pg_cron extension in Supabase first)
+-- Schedule: every 6 hours (0 */6 * * *)
+-- SELECT cron.schedule('pantheon_ingest', '0 */6 * * *', $$
+--   SELECT net.http_post(
+--     url := current_setting('app.settings.pantheon_trigger_url'),
+--     body := '{}'::jsonb
+--   );
+-- $$);
