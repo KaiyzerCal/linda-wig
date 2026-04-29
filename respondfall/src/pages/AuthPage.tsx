@@ -102,7 +102,7 @@ export default function AuthPage() {
           password: form.password,
         })
         if (error) throw error
-        navigate('/dashboard', { replace: true })
+        navigate('/dashboard/activity', { replace: true })
 
       } else if (tab === 'signup') {
         const { error } = await supabase.auth.signUp({
@@ -115,7 +115,7 @@ export default function AuthPage() {
       } else {
         const { error } = await supabase.auth.signInWithOtp({
           email: form.email,
-          options: { emailRedirectTo: `${window.location.origin}/dashboard` },
+          options: { emailRedirectTo: `${window.location.origin}/dashboard/activity` },
         })
         if (error) throw error
         setNotice('Magic link sent — check your inbox.')

@@ -2,6 +2,7 @@ import { useState, useEffect, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import { useClientContext } from '@/contexts/ClientContext'
+import { useToast } from '@/contexts/ToastContext'
 import type { Client } from '@/lib/types'
 
 // ── Constants ─────────────────────────────────────────────────────
@@ -258,6 +259,7 @@ function PhoneNumbersSection({
 export default function SettingsTab() {
   const { activeClient, refreshClients } = useClientContext()
   const navigate = useNavigate()
+  const { toast } = useToast()
 
   const [form, setForm]         = useState<SettingsForm | null>(null)
   const [saving, setSaving]     = useState(false)
@@ -328,8 +330,9 @@ export default function SettingsTab() {
       .eq('id', activeClient.id)
 
     setSaving(false)
-    if (error) { setSaveErr(error.message); return }
+    if (error) { setSaveErr(error.message); toast(error.message, 'error'); return }
     setSaveMsg('Changes saved.')
+    toast('Settings saved', 'success')
     refreshClients()
   }
 

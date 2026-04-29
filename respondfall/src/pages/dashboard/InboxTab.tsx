@@ -3,6 +3,7 @@ import {
 } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useClientContext } from '@/contexts/ClientContext'
+import { useToast } from '@/contexts/ToastContext'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -187,6 +188,7 @@ export default function InboxTab() {
 
   const bottomRef   = useRef<HTMLDivElement>(null)
   const channelRef  = useRef<RealtimeChannel | null>(null)
+  const { toast }   = useToast()
 
   // ── Load threads ───────────────────────────────────────────────
   const loadThreads = useCallback(async (clientId: string) => {
@@ -354,9 +356,9 @@ export default function InboxTab() {
 
     setSending(false)
     if (error || !(data as { message?: unknown })?.message) {
-      setSendErr(
-        error?.message ?? 'Send failed — check Twilio configuration in Settings',
-      )
+      const msg = error?.message ?? 'Send failed — check Twilio configuration in Settings'
+      setSendErr(msg)
+      toast(msg, 'error')
       return
     }
     setReplyBody('')
@@ -372,7 +374,9 @@ export default function InboxTab() {
       .eq('client_id', activeClient.id)
       .eq('caller_number', activeThread.caller_number)
     setActionBusy(false)
-    if (!error) setActionMsg('Sequence stopped.')
+    if (error) { toast(error.message, 'error'); return }
+    setActionMsg('Sequence stopped.')
+    toast('Sequence paused for this contact', 'info')
   }
 
   // ── Complete → Review ──────────────────────────────────────────
@@ -392,8 +396,10 @@ export default function InboxTab() {
     setActionBusy(false)
     if (error) {
       setActionMsg(`Error: ${error.message}`)
+      toast(error.message, 'error')
     } else {
       setActionMsg('Review request sent! Referral scheduled for +30 min.')
+      toast('Review request sent — referral queued for +30 min', 'success')
     }
   }
 

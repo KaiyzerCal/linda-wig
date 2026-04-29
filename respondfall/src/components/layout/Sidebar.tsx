@@ -2,6 +2,7 @@ import { useState, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import { useClientContext } from '@/contexts/ClientContext'
+import { useToast } from '@/contexts/ToastContext'
 import type { NewClientForm } from '@/lib/types'
 
 // ── Brand ────────────────────────────────────────────────────────
@@ -225,16 +226,22 @@ export default function Sidebar() {
   const { owner, clients, activeClient, setActiveClient, refreshClients, loading } =
     useClientContext()
   const navigate            = useNavigate()
+  const { toast }           = useToast()
   const [showModal, setShowModal] = useState(false)
 
   async function handleLogout() {
-    await supabase.auth.signOut()
-    navigate('/auth', { replace: true })
+    try {
+      await supabase.auth.signOut()
+      navigate('/', { replace: true })
+    } catch {
+      toast('Logout failed — please try again', 'error')
+    }
   }
 
   function handleSaved() {
     setShowModal(false)
     refreshClients()
+    toast('Client added successfully', 'success')
   }
 
   return (
