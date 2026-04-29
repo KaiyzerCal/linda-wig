@@ -1,15 +1,21 @@
 import { useState } from 'react'
-import ActivityTab from './dashboard/ActivityTab'
-import InboxTab from './dashboard/InboxTab'
-import SettingsTab from './dashboard/SettingsTab'
+import ActivityTab   from './dashboard/ActivityTab'
+import InboxTab      from './dashboard/InboxTab'
+import SequencesTab  from './dashboard/SequencesTab'
+import AnalyticsTab  from './dashboard/AnalyticsTab'
+import ConnectTab    from './dashboard/ConnectTab'
+import SettingsTab   from './dashboard/SettingsTab'
 import { useClientContext } from '@/contexts/ClientContext'
 
-type Tab = 'activity' | 'inbox' | 'settings'
+type Tab = 'activity' | 'inbox' | 'sequences' | 'analytics' | 'connect' | 'settings'
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'activity', label: 'Activity' },
-  { id: 'inbox',    label: 'Inbox' },
-  { id: 'settings', label: 'Settings' },
+  { id: 'activity',  label: 'Activity'  },
+  { id: 'inbox',     label: 'Inbox'     },
+  { id: 'sequences', label: 'Sequences' },
+  { id: 'analytics', label: 'Analytics' },
+  { id: 'connect',   label: 'Connect'   },
+  { id: 'settings',  label: 'Settings'  },
 ]
 
 export default function DashboardPage() {
@@ -20,11 +26,11 @@ export default function DashboardPage() {
     <div className="flex flex-col h-full">
       {/* Tab bar */}
       <div
-        className="flex items-center gap-0 border-b border-gray-800 px-6 shrink-0"
+        className="flex items-center border-b border-gray-800 px-4 shrink-0 overflow-x-auto"
         style={{ background: 'var(--surface)' }}
       >
         {activeClient && (
-          <span className="text-xs font-semibold mr-6 py-3" style={{ color: '#6b7280' }}>
+          <span className="text-xs font-semibold mr-5 py-3 shrink-0" style={{ color: '#6b7280' }}>
             {activeClient.business_name}
           </span>
         )}
@@ -33,7 +39,7 @@ export default function DashboardPage() {
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className="px-4 py-3 text-sm font-medium transition-all relative"
+            className="px-3 py-3 text-sm font-medium transition-all relative shrink-0"
             style={{ color: tab === t.id ? 'var(--text)' : '#6b7280' }}
           >
             {t.label}
@@ -49,9 +55,12 @@ export default function DashboardPage() {
 
       {/* Tab content — Inbox needs full height for split layout */}
       <div className={`flex-1 ${tab === 'inbox' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
-        {tab === 'activity' && <ActivityTab />}
-        {tab === 'inbox'    && <InboxTab />}
-        {tab === 'settings' && <SettingsTab />}
+        {tab === 'activity'  && <ActivityTab />}
+        {tab === 'inbox'     && <InboxTab />}
+        {tab === 'sequences' && <SequencesTab />}
+        {tab === 'analytics' && <AnalyticsTab />}
+        {tab === 'connect'   && <ConnectTab />}
+        {tab === 'settings'  && <SettingsTab />}
       </div>
     </div>
   )
