@@ -889,11 +889,28 @@ app.get('/linda/n8n-status', async (req, res) => {
 
 // ─── PANTHEON ────────────────────────────────────────────────────────────────
 
-const PANTHEON_RSS_FEEDS = [
-  'https://feeds.bbci.co.uk/news/world/rss.xml',
-  'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',
-  'https://feeds.reuters.com/reuters/topNews',
+// Fetch active sources from DB by tier. Falls back to hardcoded list if DB unavailable.
+const PANTHEON_FALLBACK_FEEDS = [
+  { id: null, name: 'BBC World News', rss_feed: 'https://feeds.bbci.co.uk/news/world/rss.xml', tier: 2, tier_label: 'Global Broadcaster', region: 'Global', bias_note: null },
+  { id: null, name: 'Reuters', rss_feed: 'https://feeds.reuters.com/reuters/topNews', tier: 1, tier_label: 'Wire Service', region: 'Global', bias_note: null },
+  { id: null, name: 'The New York Times', rss_feed: 'https://rss.nytimes.com/services/xml/rss/nyt/World.xml', tier: 3, tier_label: 'Newspaper of Record', region: 'USA — Global', bias_note: null },
 ];
+
+async function fetchActiveSources(tiers) {
+  try {
+    let query = supabase
+      .from('pantheon_sources')
+      .select('*')
+      .eq('is_active', true)
+      .not('rss_feed', 'is', null)
+      .order('tier', { ascending: true });
+    if (tiers?.length) query = query.in('tier', tiers);
+    const { data } = await query;
+    return data?.length ? data : PANTHEON_FALLBACK_FEEDS;
+  } catch {
+    return PANTHEON_FALLBACK_FEEDS;
+  }
+}
 
 function parseRssItems(xml) {
   const items = [];
@@ -920,7 +937,7 @@ async function callPersona(systemPrompt, userMessage, maxTokens = 280) {
   return res.content[0]?.type === 'text' ? res.content[0].text.trim() : '';
 }
 
-async function runPantheonSession(personas, triggerType, headline, sourceUrl) {
+async function runPantheonSession(personas, triggerType, headline, sourceUrl, sourceId) {
   const thoth = personas.find(p => p.name === 'Thoth');
   if (!thoth) throw new Error('Thoth not found');
 
@@ -954,7 +971,7 @@ async function runPantheonSession(personas, triggerType, headline, sourceUrl) {
 
   const { data: session, error: sessionErr } = await supabase
     .from('pantheon_sessions')
-    .insert([{ trigger_type: triggerType, trigger_content: triggerContent, trigger_source_url: sourceUrl || null, thoth_frame: frame, thoth_question: question, topic: topic || null }])
+    .insert([{ trigger_type: triggerType, trigger_content: triggerContent, trigger_source_url: sourceUrl || null, thoth_frame: frame, thoth_question: question, topic: topic || null, source_id: sourceId || null }])
     .select().single();
 
   if (sessionErr) throw new Error('Session insert failed: ' + sessionErr.message);
@@ -1029,7 +1046,7 @@ app.get('/pantheon/health', (req, res) => {
 // Sessions — returns sessions with their feed items nested, most recent first
 app.get('/pantheon/sessions', async (req, res) => {
   try {
-    let query = supabase.from('pantheon_sessions').select('*').order('created_at', { ascending: false }).limit(20);
+    let query = supabase.from('pantheon_sessions').select('*, pantheon_sources(id, name, tier_label, region, bias_note)').order('created_at', { ascending: false }).limit(20);
     if (req.query.topic && req.query.topic !== 'All') query = query.eq('topic', req.query.topic);
     const { data: sessions, error } = await query;
     if (error) throw error;
@@ -1088,18 +1105,20 @@ app.post('/pantheon/trigger', async (req, res) => {
       .limit(200);
 
     const existingUrls = new Set((existing || []).map(r => r.source_url).filter(Boolean));
-    const newItems = [];
+    const newItems = []; // { title, link, sourceId }
 
-    for (const feedUrl of PANTHEON_RSS_FEEDS) {
+    // News: draw from Tier 1 + 2 first, then 3 + 4 for regional depth
+    const sources = await fetchActiveSources([1, 2, 3, 4]);
+    for (const source of sources) {
       try {
-        const feedRes = await fetch(feedUrl, { headers: { 'User-Agent': 'PantheonFeed/1.0' }, signal: AbortSignal.timeout(8000) });
+        const feedRes = await fetch(source.rss_feed, { headers: { 'User-Agent': 'PantheonFeed/1.0' }, signal: AbortSignal.timeout(8000) });
         if (!feedRes.ok) continue;
         const xml = await feedRes.text();
         for (const item of parseRssItems(xml)) {
-          if (!existingUrls.has(item.link)) { newItems.push(item); existingUrls.add(item.link); }
+          if (!existingUrls.has(item.link)) { newItems.push({ ...item, sourceId: source.id }); existingUrls.add(item.link); }
         }
       } catch (e) {
-        console.error(`[Pantheon] RSS fetch failed: ${feedUrl}`, e.message);
+        console.error(`[Pantheon] RSS fetch failed: ${source.name}`, e.message);
       }
     }
 
@@ -1121,15 +1140,27 @@ app.post('/pantheon/trigger', async (req, res) => {
     // Background generation — fire and forget
     (async () => {
       if (triggerType === 'historical') {
+        // For historical sessions, optionally seed with a Tier 5 epistemic headline
+        const epistemicSources = await fetchActiveSources([5]);
+        let epistemicItem = null;
+        for (const src of epistemicSources) {
+          try {
+            const feedRes = await fetch(src.rss_feed, { headers: { 'User-Agent': 'PantheonFeed/1.0' }, signal: AbortSignal.timeout(8000) });
+            if (!feedRes.ok) continue;
+            const xml = await feedRes.text();
+            const items = parseRssItems(xml);
+            if (items.length) { epistemicItem = { ...items[0], sourceId: src.id }; break; }
+          } catch { /* skip */ }
+        }
         try {
-          await runPantheonSession(personas, 'historical', null, null);
+          await runPantheonSession(personas, 'historical', epistemicItem?.title || null, epistemicItem?.link || null, epistemicItem?.sourceId || null);
         } catch (e) {
           console.error('[Pantheon] Historical session error:', e.message);
         }
       } else {
         for (const item of toRun) {
           try {
-            await runPantheonSession(personas, 'news', item.title, item.link);
+            await runPantheonSession(personas, 'news', item.title, item.link, item.sourceId);
           } catch (e) {
             console.error('[Pantheon] News session error:', e.message);
           }
@@ -1235,6 +1266,114 @@ app.get('/pantheon/session', async (req, res) => {
 
 // ─── INTERFACE ───────────────────────────────────────────────────────────────
 
+// Source library — JSON API
+app.get('/pantheon/sources', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('pantheon_sources')
+      .select('*')
+      .order('tier', { ascending: true })
+      .order('name', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Source library — HTML reference page
+app.get('/sources', async (req, res) => {
+  try {
+    const { data: sources } = await supabase
+      .from('pantheon_sources')
+      .select('*')
+      .order('tier', { ascending: true })
+      .order('name', { ascending: true });
+
+    const byTier = {};
+    for (const s of sources || []) {
+      if (!byTier[s.tier]) byTier[s.tier] = { label: s.tier_label, sources: [] };
+      byTier[s.tier].sources.push(s);
+    }
+
+    const totalCount = sources?.length || 0;
+
+    const tierSections = Object.entries(byTier).map(([tier, group]) => {
+      const rows = group.sources.map(s => {
+        const rssDot = s.rss_feed
+          ? `<span class="rss-dot rss-on" title="RSS available">●</span>`
+          : `<span class="rss-dot rss-off" title="No RSS feed">●</span>`;
+        const biasGlyph = s.bias_note
+          ? `<span class="bias-glyph" title="${s.bias_note.replace(/"/g, '&quot;')}">◈</span>`
+          : '';
+        return `<div class="source-row">${rssDot} <span class="source-name">${s.name}${biasGlyph}</span> <span class="source-sep">·</span> <span class="source-region">${s.region}</span></div>`;
+      }).join('');
+      return `
+        <section class="tier-section">
+          <div class="tier-header">TIER ${tier} — ${group.label.toUpperCase()}</div>
+          ${rows}
+        </section>`;
+    }).join('');
+
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Pantheon Source Library</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0a;
+      --surface: #111;
+      --border: #222;
+      --text: #d4c9b0;
+      --muted: #5a5a4a;
+      --accent: #8b7355;
+      --rss-on: #4a7c59;
+      --rss-off: #3a3a3a;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Georgia', serif; min-height: 100vh; padding: 4rem 2rem; }
+    .container { max-width: 720px; margin: 0 auto; }
+    .masthead { margin-bottom: 3.5rem; border-bottom: 1px solid var(--border); padding-bottom: 2rem; }
+    .masthead-title { font-size: 1.05rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--text); margin-bottom: 0.5rem; }
+    .masthead-sub { font-size: 0.8rem; color: var(--muted); letter-spacing: 0.1em; font-style: italic; }
+    .masthead-count { font-size: 0.75rem; color: var(--muted); margin-top: 0.75rem; letter-spacing: 0.08em; }
+    .tier-section { margin-bottom: 2.5rem; }
+    .tier-header { font-size: 0.68rem; letter-spacing: 0.22em; color: var(--accent); text-transform: uppercase; margin-bottom: 0.9rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--border); }
+    .source-row { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.3rem 0; font-size: 0.88rem; line-height: 1.5; }
+    .source-name { color: var(--text); }
+    .source-sep { color: var(--muted); }
+    .source-region { color: var(--muted); font-size: 0.8rem; }
+    .rss-dot { font-size: 0.6rem; flex-shrink: 0; position: relative; top: -1px; }
+    .rss-on { color: var(--rss-on); }
+    .rss-off { color: var(--rss-off); }
+    .bias-glyph { color: var(--accent); font-size: 0.7rem; margin-left: 0.3rem; cursor: help; }
+    .footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--border); font-size: 0.72rem; color: var(--muted); letter-spacing: 0.08em; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="masthead">
+      <div class="masthead-title">The Pantheon Source Library</div>
+      <div class="masthead-sub">Forty-four windows. One world.</div>
+      <div class="masthead-count">${totalCount} sources · 5 tiers · Active as of ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+    </div>
+    ${tierSections}
+    <div class="footer">
+      ● RSS active &nbsp;|&nbsp; ● No RSS feed &nbsp;|&nbsp; ◈ State-affiliated voice — noted, not excluded<br><br>
+      <a href="/pantheon">← The Chamber</a>
+    </div>
+  </div>
+</body>
+</html>`);
+  } catch (err) {
+    res.status(500).send('Source library unavailable: ' + err.message);
+  }
+});
+
 // Interface
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'interface.html'));
@@ -1266,18 +1405,19 @@ async function pantheonAutoTrigger() {
       .limit(200);
 
     const existingUrls = new Set((existing || []).map(r => r.source_url).filter(Boolean));
-    const newItems = [];
+    const newItems = []; // { title, link, sourceId }
 
-    for (const feedUrl of PANTHEON_RSS_FEEDS) {
+    const sources = await fetchActiveSources([1, 2, 3, 4]);
+    for (const source of sources) {
       try {
-        const feedRes = await fetch(feedUrl, { headers: { 'User-Agent': 'PantheonFeed/1.0' }, signal: AbortSignal.timeout(8000) });
+        const feedRes = await fetch(source.rss_feed, { headers: { 'User-Agent': 'PantheonFeed/1.0' }, signal: AbortSignal.timeout(8000) });
         if (!feedRes.ok) continue;
         const xml = await feedRes.text();
         for (const item of parseRssItems(xml)) {
-          if (!existingUrls.has(item.link)) { newItems.push(item); existingUrls.add(item.link); }
+          if (!existingUrls.has(item.link)) { newItems.push({ ...item, sourceId: source.id }); existingUrls.add(item.link); }
         }
       } catch (e) {
-        console.error('[Pantheon] RSS fetch failed:', e.message);
+        console.error(`[Pantheon] RSS fetch failed: ${source.name}`, e.message);
       }
     }
 
@@ -1286,14 +1426,25 @@ async function pantheonAutoTrigger() {
     if (toRun.length) {
       console.log(`[Pantheon] ${toRun.length} new headline(s). Chamber convening.`);
       for (const item of toRun) {
-        await runPantheonSession(personas, 'news', item.title, item.link);
+        await runPantheonSession(personas, 'news', item.title, item.link, item.sourceId);
       }
     } else {
       const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
       const { data: recent } = await supabase.from('pantheon_sessions').select('id').gte('created_at', sixHoursAgo).limit(1);
       if (!recent?.length) {
         console.log('[Pantheon] No new headlines. Triggering historical session.');
-        await runPantheonSession(personas, 'historical', null, null);
+        // Seed historical with a Tier 5 epistemic headline when available
+        const epistemicSources = await fetchActiveSources([5]);
+        let epistemicItem = null;
+        for (const src of epistemicSources) {
+          try {
+            const feedRes = await fetch(src.rss_feed, { headers: { 'User-Agent': 'PantheonFeed/1.0' }, signal: AbortSignal.timeout(8000) });
+            if (!feedRes.ok) continue;
+            const items = parseRssItems(await feedRes.text());
+            if (items.length) { epistemicItem = { ...items[0], sourceId: src.id }; break; }
+          } catch { /* skip */ }
+        }
+        await runPantheonSession(personas, 'historical', epistemicItem?.title || null, epistemicItem?.link || null, epistemicItem?.sourceId || null);
       } else {
         console.log('[Pantheon] No new headlines. Recent session exists. Resting.');
       }
