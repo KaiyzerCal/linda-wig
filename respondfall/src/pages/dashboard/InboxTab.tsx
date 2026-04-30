@@ -2,6 +2,7 @@ import {
   useState, useEffect, useRef, FormEvent, useCallback,
 } from 'react'
 import { supabase } from '@/lib/supabase'
+import { n8nPost } from '@/lib/n8n'
 import { useClientContext } from '@/contexts/ClientContext'
 import { useToast } from '@/contexts/ToastContext'
 import type { RealtimeChannel } from '@supabase/supabase-js'
@@ -345,23 +346,20 @@ export default function InboxTab() {
     const { data: { session } } = await supabase.auth.getSession()
     const token = session?.access_token ?? ''
 
-    const { data, error } = await supabase.functions.invoke('send-inbox-reply', {
-      headers: { Authorization: `Bearer ${token}` },
-      body: {
-        clientId:     activeClient.id,
-        callerNumber: activeThread.caller_number,
-        body:         replyBody.trim(),
-      },
-    })
-
-    setSending(false)
-    if (error || !(data as { message?: unknown })?.message) {
-      const msg = error?.message ?? 'Send failed — check Twilio configuration in Settings'
+    try {
+      await n8nPost(
+        '/respondfall/send-inbox-reply',
+        { conversationId: activeThread.id, message: replyBody.trim() },
+        { Authorization: `Bearer ${token}` },
+      )
+      setReplyBody('')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Send failed — check Twilio configuration in Settings'
       setSendErr(msg)
       toast(msg, 'error')
-      return
+    } finally {
+      setSending(false)
     }
-    setReplyBody('')
   }
 
   // ── Stop Sequence ──────────────────────────────────────────────
@@ -388,18 +386,20 @@ export default function InboxTab() {
     const { data: { session } } = await supabase.auth.getSession()
     const token = session?.access_token ?? ''
 
-    const { error } = await supabase.functions.invoke('send-review-request', {
-      headers: { Authorization: `Bearer ${token}` },
-      body: { clientId: activeClient.id, callerNumber: activeThread.caller_number },
-    })
-
-    setActionBusy(false)
-    if (error) {
-      setActionMsg(`Error: ${error.message}`)
-      toast(error.message, 'error')
-    } else {
+    try {
+      await n8nPost(
+        '/respondfall/send-review-request',
+        { conversationId: activeThread.id },
+        { Authorization: `Bearer ${token}` },
+      )
       setActionMsg('Review request sent! Referral scheduled for +30 min.')
       toast('Review request sent — referral queued for +30 min', 'success')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to send review request'
+      setActionMsg(`Error: ${msg}`)
+      toast(msg, 'error')
+    } finally {
+      setActionBusy(false)
     }
   }
 

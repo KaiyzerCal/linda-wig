@@ -1,6 +1,7 @@
 import { useState, useEffect, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
+import { n8nPost } from '@/lib/n8n'
 import { useClientContext } from '@/contexts/ClientContext'
 import { useToast } from '@/contexts/ToastContext'
 import type { Client } from '@/lib/types'
@@ -114,12 +115,12 @@ function PhoneNumbersSection({
     setSelected(null)
     setSearching(true)
     try {
-      const { data, error } = await supabase.functions.invoke('search-numbers', {
-        body: { areaCode },
-      })
-      if (error) throw error
-      setResults((data as { numbers: AvailableNumber[] }).numbers ?? [])
-      if ((data as { numbers: AvailableNumber[] }).numbers?.length === 0) {
+      const data = await n8nPost<{ numbers: AvailableNumber[] }>(
+        '/respondfall/search-numbers',
+        { areaCode },
+      )
+      setResults(data.numbers ?? [])
+      if (data.numbers?.length === 0) {
         setSearchError('No numbers available in that area code. Try another.')
       }
     } catch (e: unknown) {
@@ -134,11 +135,11 @@ function PhoneNumbersSection({
     setProvisionError(null)
     setProvisioning(true)
     try {
-      const { data, error } = await supabase.functions.invoke('provision-number', {
-        body: { clientId: client.id, phoneNumber: selected.phoneNumber },
-      })
-      if (error) throw error
-      if ((data as { success?: boolean })?.success) {
+      const data = await n8nPost<{ success?: boolean }>(
+        '/respondfall/provision-number',
+        { clientId: client.id, phoneNumber: selected.phoneNumber, clientName: client.business_name ?? '' },
+      )
+      if (data?.success) {
         setResults([])
         setSelected(null)
         setAreaCode('')

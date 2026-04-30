@@ -1,0 +1,122 @@
+{
+  "name": "Respondfall 03 — Send Review Request",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "respondfall/send-review-request",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verify JWT + ownership, same pattern as send-inbox-reply\nconst authHeader = $('Webhook').item.json.headers?.authorization ?? '';\nconst token = authHeader.replace(/^Bearer\\s+/i, '');\nif (!token) throw new Error('Missing authorization token');\n\nconst userRes = await fetch(`${$vars.RESPONDFALL_SUPABASE_URL}/auth/v1/user`, {\n  headers: { Authorization: `Bearer ${token}`, apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY },\n});\nif (!userRes.ok) throw new Error('Invalid or expired token');\nconst user = await userRes.json();\n\nconst body = $('Webhook').item.json.body;\nconst { conversationId } = body;\n\nconst ownerRes = await fetch(\n  `${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/agency_owners?user_id=eq.${user.id}&select=id`,\n  { headers: { apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY, Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}` } }\n);\nconst owners = await ownerRes.json();\nif (!owners.length) throw new Error('No agency owner found');\nconst ownerId = owners[0].id;\n\nconst convRes = await fetch(\n  `${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/conversations?id=eq.${conversationId}&select=id,lead_phone,client_id,clients(respondfall_number,business_name,review_link,agency_owner_id)`,\n  { headers: { apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY, Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}` } }\n);\nconst convs = await convRes.json();\nif (!convs.length) throw new Error('Conversation not found');\nconst conv = convs[0];\nif (conv.clients.agency_owner_id !== ownerId) throw new Error('Unauthorized');\n\nreturn [{ json: { conv } }];"
+      },
+      "id": "verify-jwt",
+      "name": "Verify JWT & Ownership",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.twilio.com/2010-04-01/Accounts/{{ $vars.RESPONDFALL_TWILIO_ACCOUNT_SID }}/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "To", "value": "={{ $json.conv.lead_phone }}" },
+            { "name": "From", "value": "={{ $json.conv.clients.respondfall_number }}" },
+            {
+              "name": "Body",
+              "value": "=Hi! This is {{ $json.conv.clients.business_name }}. We'd love your feedback — would you mind leaving us a quick review? {{ $json.conv.clients.review_link ?? 'Reply STOP to opt out.' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "twilio-send-review",
+      "name": "Twilio Send Review SMS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 300],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "respondfall-twilio-basic",
+          "name": "Respondfall Twilio Basic Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const conv = $('Verify JWT & Ownership').item.json.conv;\nconst twilioSid = $json.sid;\nconst now = new Date();\nconst referralAt = new Date(now.getTime() + 30 * 60 * 1000).toISOString();\n\n// Insert review message\nconst msgRes = await fetch(`${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/messages`, {\n  method: 'POST',\n  headers: {\n    apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY,\n    Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}`,\n    'Content-Type': 'application/json',\n  },\n  body: JSON.stringify({\n    conversation_id: conv.id,\n    direction: 'outbound',\n    body: `Review request sent`,\n    message_type: 'review_request',\n    twilio_sid: twilioSid,\n  }),\n});\n\n// Close conversation\nawait fetch(`${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/conversations?id=eq.${conv.id}`, {\n  method: 'PATCH',\n  headers: {\n    apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY,\n    Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}`,\n    'Content-Type': 'application/json',\n  },\n  body: JSON.stringify({ status: 'review_sent' }),\n});\n\n// Schedule referral message +30 min\nawait fetch(`${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/messages`, {\n  method: 'POST',\n  headers: {\n    apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY,\n    Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}`,\n    'Content-Type': 'application/json',\n  },\n  body: JSON.stringify({\n    conversation_id: conv.id,\n    direction: 'outbound',\n    body: null,\n    message_type: 'referral',\n    scheduled_at: referralAt,\n  }),\n});\n\nreturn [{ json: { success: true } }];"
+      },
+      "id": "update-supabase",
+      "name": "Update Supabase & Schedule Referral",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true }) }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseCode": 401,
+        "responseBody": "={{ JSON.stringify({ error: $json.message }) }}",
+        "options": {}
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 520]
+    },
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [480, 520]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Verify JWT & Ownership", "type": "main", "index": 0 }]]
+    },
+    "Verify JWT & Ownership": {
+      "main": [[{ "node": "Twilio Send Review SMS", "type": "main", "index": 0 }]]
+    },
+    "Twilio Send Review SMS": {
+      "main": [[{ "node": "Update Supabase & Schedule Referral", "type": "main", "index": 0 }]]
+    },
+    "Update Supabase & Schedule Referral": {
+      "main": [[{ "node": "Respond Success", "type": "main", "index": 0 }]]
+    },
+    "Error Handler": {
+      "main": [[{ "node": "Respond Error", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "respondfall" }]
+}

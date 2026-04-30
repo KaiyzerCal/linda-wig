@@ -1,0 +1,92 @@
+{
+  "name": "Respondfall 02 — Step Two Scheduler",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 5 }]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Find messages due for send: scheduled_at <= now, message_type='step2', no twilio_sid yet\nconst now = new Date().toISOString();\n\nconst res = await fetch(\n  `${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/messages?message_type=eq.step2&twilio_sid=is.null&scheduled_at=lte.${encodeURIComponent(now)}&select=id,conversation_id,body,conversations(lead_phone,opted_out,status,client_id,clients(respondfall_number,system_active))`,\n  {\n    headers: {\n      apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY,\n      Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}`,\n    },\n  }\n);\nconst messages = await res.json();\n\nconst eligible = messages.filter(m => {\n  const conv = m.conversations;\n  if (!conv) return false;\n  if (conv.opted_out) return false;\n  if (!conv.clients?.system_active) return false;\n  return true;\n});\n\n// For each, check no inbound reply exists after the scheduled message\nconst toSend = [];\nfor (const msg of eligible) {\n  const replyRes = await fetch(\n    `${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/messages?conversation_id=eq.${msg.conversation_id}&direction=eq.inbound&select=id`,\n    {\n      headers: {\n        apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY,\n        Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}`,\n      },\n    }\n  );\n  const replies = await replyRes.json();\n  if (replies.length === 0) toSend.push(msg);\n}\n\nreturn toSend.map(m => ({ json: m }));"
+      },
+      "id": "fetch-due-messages",
+      "name": "Fetch Due Step-2 Messages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.twilio.com/2010-04-01/Accounts/{{ $vars.RESPONDFALL_TWILIO_ACCOUNT_SID }}/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "To", "value": "={{ $json.conversations.lead_phone }}" },
+            { "name": "From", "value": "={{ $json.conversations.clients.respondfall_number }}" },
+            { "name": "Body", "value": "={{ $json.body }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "twilio-send",
+      "name": "Twilio Send SMS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 300],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "respondfall-twilio-basic",
+          "name": "Respondfall Twilio Basic Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $vars.RESPONDFALL_SUPABASE_URL }}/rest/v1/messages?id=eq.{{ $('Fetch Due Step-2 Messages').item.json.id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $vars.RESPONDFALL_SUPABASE_SERVICE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $vars.RESPONDFALL_SUPABASE_SERVICE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ twilio_sid: $json.sid }) }}",
+        "options": {}
+      },
+      "id": "mark-sent",
+      "name": "Mark Message Sent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 300]
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [[{ "node": "Fetch Due Step-2 Messages", "type": "main", "index": 0 }]]
+    },
+    "Fetch Due Step-2 Messages": {
+      "main": [[{ "node": "Twilio Send SMS", "type": "main", "index": 0 }]]
+    },
+    "Twilio Send SMS": {
+      "main": [[{ "node": "Mark Message Sent", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "respondfall" }]
+}

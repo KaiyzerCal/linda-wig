@@ -1,0 +1,134 @@
+{
+  "name": "Respondfall 04 — Send Inbox Reply",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "respondfall/send-inbox-reply",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verify the JWT from the Authorization header\nconst authHeader = $('Webhook').item.json.headers?.authorization ?? '';\nconst token = authHeader.replace(/^Bearer\\s+/i, '');\nif (!token) throw new Error('Missing authorization token');\n\n// Exchange token for user via Supabase\nconst res = await fetch(`${$vars.RESPONDFALL_SUPABASE_URL}/auth/v1/user`, {\n  headers: {\n    Authorization: `Bearer ${token}`,\n    apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY,\n  },\n});\nif (!res.ok) throw new Error('Invalid or expired token');\nconst user = await res.json();\n\n// Verify ownership: agency_owner → client → conversation\nconst body = $('Webhook').item.json.body;\nconst { conversationId, message } = body;\n\nconst ownerRes = await fetch(\n  `${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/agency_owners?user_id=eq.${user.id}&select=id`,\n  { headers: { apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY, Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}` } }\n);\nconst owners = await ownerRes.json();\nif (!owners.length) throw new Error('No agency owner found');\nconst ownerId = owners[0].id;\n\nconst convRes = await fetch(\n  `${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/conversations?id=eq.${conversationId}&select=id,lead_phone,client_id,clients(respondfall_number,agency_owner_id)`,\n  { headers: { apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY, Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}` } }\n);\nconst convs = await convRes.json();\nif (!convs.length) throw new Error('Conversation not found');\nconst conv = convs[0];\nif (conv.clients.agency_owner_id !== ownerId) throw new Error('Unauthorized');\n\nreturn [{ json: { conv, message, token } }];"
+      },
+      "id": "verify-jwt",
+      "name": "Verify JWT & Ownership",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.twilio.com/2010-04-01/Accounts/{{ $vars.RESPONDFALL_TWILIO_ACCOUNT_SID }}/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "To", "value": "={{ $json.conv.lead_phone }}" },
+            { "name": "From", "value": "={{ $json.conv.clients.respondfall_number }}" },
+            { "name": "Body", "value": "={{ $json.message }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "twilio-send",
+      "name": "Twilio Send SMS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 300],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "respondfall-twilio-basic",
+          "name": "Respondfall Twilio Basic Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.RESPONDFALL_SUPABASE_URL }}/rest/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $vars.RESPONDFALL_SUPABASE_SERVICE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $vars.RESPONDFALL_SUPABASE_SERVICE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ conversation_id: $('Verify JWT & Ownership').item.json.conv.id, direction: 'outbound', body: $('Verify JWT & Ownership').item.json.message, message_type: 'manual', twilio_sid: $json.sid }) }}",
+        "options": {}
+      },
+      "id": "supabase-insert",
+      "name": "Insert Message to Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true }) }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseCode": 401,
+        "responseBody": "={{ JSON.stringify({ error: $json.message }) }}",
+        "options": {}
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 520]
+    },
+    {
+      "parameters": {
+        "errorMessage": "={{ $json.message }}"
+      },
+      "id": "error-trigger",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [480, 520]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Verify JWT & Ownership", "type": "main", "index": 0 }]]
+    },
+    "Verify JWT & Ownership": {
+      "main": [[{ "node": "Twilio Send SMS", "type": "main", "index": 0 }]]
+    },
+    "Twilio Send SMS": {
+      "main": [[{ "node": "Insert Message to Supabase", "type": "main", "index": 0 }]]
+    },
+    "Insert Message to Supabase": {
+      "main": [[{ "node": "Respond Success", "type": "main", "index": 0 }]]
+    },
+    "Error Handler": {
+      "main": [[{ "node": "Respond Error", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "respondfall" }]
+}

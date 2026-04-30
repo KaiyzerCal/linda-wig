@@ -1,0 +1,68 @@
+{
+  "name": "Respondfall 05 — Number Search",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "respondfall/search-numbers",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.twilio.com/2010-04-01/Accounts/{{ $vars.RESPONDFALL_TWILIO_ACCOUNT_SID }}/AvailablePhoneNumbers/US/Local.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "AreaCode", "value": "={{ $json.body.areaCode ?? '' }}" },
+            { "name": "Contains", "value": "={{ $json.body.contains ?? '' }}" },
+            { "name": "PageSize", "value": "10" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "twilio-search",
+      "name": "Twilio Search Numbers",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "respondfall-twilio-basic",
+          "name": "Respondfall Twilio Basic Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ numbers: $json.available_phone_numbers.map(n => ({ phoneNumber: n.phone_number, friendlyName: n.friendly_name, locality: n.locality, region: n.region })) }) }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Twilio Search Numbers", "type": "main", "index": 0 }]]
+    },
+    "Twilio Search Numbers": {
+      "main": [[{ "node": "Respond Success", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "respondfall" }]
+}

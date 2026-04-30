@@ -1,0 +1,123 @@
+{
+  "name": "Respondfall 06 — Provision Number",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "respondfall/provision-number",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.twilio.com/2010-04-01/Accounts/{{ $vars.RESPONDFALL_TWILIO_ACCOUNT_SID }}/IncomingPhoneNumbers.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "PhoneNumber", "value": "={{ $json.body.phoneNumber }}" },
+            { "name": "FriendlyName", "value": "={{ $json.body.clientName }}" },
+            {
+              "name": "VoiceUrl",
+              "value": "=https://your-instance.app.n8n.cloud/webhook/respondfall/twilio-inbound"
+            },
+            {
+              "name": "VoiceMethod",
+              "value": "POST"
+            },
+            {
+              "name": "StatusCallbackUrl",
+              "value": "=https://your-instance.app.n8n.cloud/webhook/respondfall/twilio-inbound"
+            },
+            {
+              "name": "StatusCallbackMethod",
+              "value": "POST"
+            },
+            {
+              "name": "SmsUrl",
+              "value": "=https://your-instance.app.n8n.cloud/webhook/respondfall/twilio-inbound"
+            },
+            {
+              "name": "SmsMethod",
+              "value": "POST"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "twilio-buy",
+      "name": "Twilio Buy Number",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "respondfall-twilio-basic",
+          "name": "Respondfall Twilio Basic Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $vars.RESPONDFALL_SUPABASE_URL }}/rest/v1/clients?id=eq.{{ $('Webhook').item.json.body.clientId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $vars.RESPONDFALL_SUPABASE_SERVICE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $vars.RESPONDFALL_SUPABASE_SERVICE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=representation" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "respondfall_number", "value": "={{ $json.phone_number }}" },
+            { "name": "twilio_number_sid", "value": "={{ $json.sid }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "supabase-update",
+      "name": "Update Client in Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, phoneNumber: $('Twilio Buy Number').item.json.phone_number, sid: $('Twilio Buy Number').item.json.sid }) }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [960, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Twilio Buy Number", "type": "main", "index": 0 }]]
+    },
+    "Twilio Buy Number": {
+      "main": [[{ "node": "Update Client in Supabase", "type": "main", "index": 0 }]]
+    },
+    "Update Client in Supabase": {
+      "main": [[{ "node": "Respond Success", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "respondfall" }]
+}

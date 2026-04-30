@@ -1,0 +1,193 @@
+{
+  "name": "Respondfall 01 — Twilio Inbound",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "respondfall/twilio-inbound",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate Twilio signature via HMAC-SHA1\nconst headers = $('Webhook').item.json.headers;\nconst body = $('Webhook').item.json.body;\nconst twilioSig = headers['x-twilio-signature'];\n\nif (!twilioSig) throw new Error('Missing Twilio signature');\n\nconst url = `https://your-instance.app.n8n.cloud/webhook/respondfall/twilio-inbound`;\n\n// Build sorted param string for HMAC\nconst sorted = Object.keys(body).sort().map(k => `${k}${body[k]}`).join('');\nconst toSign = url + sorted;\n\nconst key = await crypto.subtle.importKey(\n  'raw',\n  new TextEncoder().encode($vars.RESPONDFALL_TWILIO_AUTH_TOKEN),\n  { name: 'HMAC', hash: 'SHA-1' },\n  false,\n  ['sign']\n);\nconst sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(toSign));\nconst expected = btoa(String.fromCharCode(...new Uint8Array(sig)));\n\nif (expected !== twilioSig) throw new Error('Invalid Twilio signature');\n\n// Identify call type\nconst callStatus = body.CallStatus;\nconst msgBody = body.Body;\nconst isVoice = !!body.CallSid && !body.Body;\nconst isVoiceStatus = !!callStatus && !body.Body;\nconst isSms = !!body.MessageSid;\n\nreturn [{ json: { body, isVoice, isVoiceStatus, isSms, callStatus, msgBody } }];"
+      },
+      "id": "validate-sig",
+      "name": "Validate Twilio Signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "is-voice",
+              "leftValue": "={{ $json.isVoice }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "route-type",
+      "name": "Route: Voice or SMS?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [720, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Return TwiML to forward the call to the real business phone\nconst body = $('Validate Twilio Signature').item.json.body;\nconst calledNumber = body.To;\n\n// Look up client by respondfall_number\nconst res = await fetch(\n  `${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/clients?respondfall_number=eq.${encodeURIComponent(calledNumber)}&select=id,business_phone,business_name,system_active`,\n  { headers: { apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY, Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}` } }\n);\nconst clients = await res.json();\nif (!clients.length) throw new Error('Client not found for number: ' + calledNumber);\nconst client = clients[0];\n\nconst twiml = `<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n  <Dial action=\"https://your-instance.app.n8n.cloud/webhook/respondfall/twilio-inbound\" method=\"POST\" timeout=\"20\">\n    <Number statusCallbackEvent=\"completed\" statusCallback=\"https://your-instance.app.n8n.cloud/webhook/respondfall/twilio-inbound\" statusCallbackMethod=\"POST\">${client.business_phone}</Number>\n  </Dial>\n</Response>`;\n\nreturn [{ json: { twiml, clientId: client.id, businessPhone: client.business_phone, systemActive: client.system_active } }];"
+      },
+      "id": "handle-voice",
+      "name": "Handle Voice Call",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.twiml }}",
+        "options": { "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/xml" }] } }
+      },
+      "id": "respond-twiml",
+      "name": "Respond TwiML",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle call StatusCallback — detect missed call\nconst body = $('Validate Twilio Signature').item.json.body;\nconst callStatus = body.CallStatus;\nconst isSms = $('Validate Twilio Signature').item.json.isSms;\n\n// If this is the voice status callback\nif (!isSms && callStatus) {\n  const calledNumber = body.To;\n  const callerNumber = body.From || body.Called;\n  const callSid = body.CallSid;\n  const isMissed = ['no-answer', 'busy', 'failed'].includes(callStatus);\n\n  if (!isMissed) {\n    return [{ json: { skip: true, reason: `Call status: ${callStatus}` } }];\n  }\n\n  // Look up client\n  const clientRes = await fetch(\n    `${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/clients?respondfall_number=eq.${encodeURIComponent(calledNumber)}&select=id,business_name,system_active,step1_template,step2_template,step2_delay_hours,respondfall_number`,\n    { headers: { apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY, Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}` } }\n  );\n  const clients = await clientRes.json();\n  if (!clients.length) return [{ json: { skip: true, reason: 'No client found' } }];\n  const client = clients[0];\n\n  if (!client.system_active) return [{ json: { skip: true, reason: 'System inactive' } }];\n\n  // Dedup: check missed_calls for this call_sid\n  const dupRes = await fetch(\n    `${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/missed_calls?call_sid=eq.${callSid}&select=id`,\n    { headers: { apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY, Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}` } }\n  );\n  const dups = await dupRes.json();\n  if (dups.length) return [{ json: { skip: true, reason: 'Duplicate call_sid' } }];\n\n  // Check opt-out\n  const optRes = await fetch(\n    `${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/opt_outs?client_id=eq.${client.id}&phone=eq.${encodeURIComponent(callerNumber)}&select=id`,\n    { headers: { apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY, Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}` } }\n  );\n  const opts = await optRes.json();\n  if (opts.length) return [{ json: { skip: true, reason: 'Opted out' } }];\n\n  // Blackout check (9pm–8am local, approximate UTC)\n  const hour = new Date().getUTCHours();\n  if (hour >= 1 && hour < 12) return [{ json: { skip: true, reason: 'Blackout window' } }];\n\n  // Record missed call\n  await fetch(`${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/missed_calls`, {\n    method: 'POST',\n    headers: {\n      apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY,\n      Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}`,\n      'Content-Type': 'application/json',\n    },\n    body: JSON.stringify({ client_id: client.id, caller_phone: callerNumber, call_sid: callSid, call_status: callStatus }),\n  });\n\n  // Find or create conversation\n  let convRes = await fetch(\n    `${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/conversations?client_id=eq.${client.id}&lead_phone=eq.${encodeURIComponent(callerNumber)}&status=eq.open&select=id`,\n    { headers: { apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY, Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}` } }\n  );\n  let convs = await convRes.json();\n  let conversationId;\n  if (convs.length) {\n    conversationId = convs[0].id;\n  } else {\n    const newConv = await fetch(`${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/conversations`, {\n      method: 'POST',\n      headers: {\n        apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY,\n        Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}`,\n        'Content-Type': 'application/json',\n        Prefer: 'return=representation',\n      },\n      body: JSON.stringify({ client_id: client.id, lead_phone: callerNumber, status: 'open', opted_out: false }),\n    });\n    const newConvData = await newConv.json();\n    conversationId = newConvData[0].id;\n  }\n\n  // Build Step 1 message\n  const step1Body = (client.step1_template ?? \"Hi! We just missed your call. We'd love to help — what do you need?\")\n    .replace('{{business_name}}', client.business_name);\n\n  // Send Step 1 immediately via Twilio\n  const smsRes = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${$vars.RESPONDFALL_TWILIO_ACCOUNT_SID}/Messages.json`, {\n    method: 'POST',\n    headers: {\n      'Content-Type': 'application/x-www-form-urlencoded',\n      Authorization: `Basic ${btoa($vars.RESPONDFALL_TWILIO_ACCOUNT_SID + ':' + $vars.RESPONDFALL_TWILIO_AUTH_TOKEN)}`,\n    },\n    body: new URLSearchParams({ To: callerNumber, From: client.respondfall_number, Body: step1Body }).toString(),\n  });\n  const smsData = await smsRes.json();\n\n  // Insert Step 1 message\n  await fetch(`${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/messages`, {\n    method: 'POST',\n    headers: {\n      apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY,\n      Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}`,\n      'Content-Type': 'application/json',\n    },\n    body: JSON.stringify({ conversation_id: conversationId, direction: 'outbound', body: step1Body, message_type: 'step1', twilio_sid: smsData.sid }),\n  });\n\n  // Schedule Step 2\n  const delayHours = client.step2_delay_hours ?? 24;\n  const scheduledAt = new Date(Date.now() + delayHours * 60 * 60 * 1000).toISOString();\n  const step2Body = (client.step2_template ?? \"Hey, just checking in! Did you get a chance to connect with us?\")\n    .replace('{{business_name}}', client.business_name);\n\n  await fetch(`${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/messages`, {\n    method: 'POST',\n    headers: {\n      apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY,\n      Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}`,\n      'Content-Type': 'application/json',\n    },\n    body: JSON.stringify({ conversation_id: conversationId, direction: 'outbound', body: step2Body, message_type: 'step2', scheduled_at: scheduledAt }),\n  });\n\n  return [{ json: { handled: 'missed_call', conversationId } }];\n}\n\n// If we get here it's an SMS — pass through\nreturn [{ json: $('Validate Twilio Signature').item.json }];"
+      },
+      "id": "handle-status-or-sms",
+      "name": "Handle Status / SMS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 700]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "conditions": [
+            {
+              "id": "is-sms",
+              "leftValue": "={{ $json.isSms }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "route-sms",
+      "name": "Is SMS?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1200, 700]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle inbound SMS: STOP, referral reply, AI qualification\nconst validated = $('Validate Twilio Signature').item.json;\nconst body = validated.body;\nconst fromPhone = body.From;\nconst toPhone = body.To;\nconst msgText = (body.Body ?? '').trim();\nconst msgUpper = msgText.toUpperCase();\n\n// Look up client\nconst clientRes = await fetch(\n  `${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/clients?respondfall_number=eq.${encodeURIComponent(toPhone)}&select=id,business_name,system_active,respondfall_number,business_phone,agency_owner_id`,\n  { headers: { apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY, Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}` } }\n);\nconst clients = await clientRes.json();\nif (!clients.length) return [{ json: { skip: true, reason: 'No client' } }];\nconst client = clients[0];\n\n// Handle STOP\nif (['STOP', 'UNSUBSCRIBE', 'CANCEL', 'QUIT', 'END'].includes(msgUpper)) {\n  // Mark conversation opted_out\n  await fetch(`${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/conversations?client_id=eq.${client.id}&lead_phone=eq.${encodeURIComponent(fromPhone)}`, {\n    method: 'PATCH',\n    headers: {\n      apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY,\n      Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}`,\n      'Content-Type': 'application/json',\n    },\n    body: JSON.stringify({ opted_out: true, status: 'opted_out' }),\n  });\n  // Insert opt_out record\n  await fetch(`${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/opt_outs`, {\n    method: 'POST',\n    headers: {\n      apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY,\n      Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}`,\n      'Content-Type': 'application/json',\n    },\n    body: JSON.stringify({ client_id: client.id, phone: fromPhone }),\n  });\n  return [{ json: { handled: 'stop', twiml: '<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>' } }];\n}\n\n// Find open conversation\nconst convRes = await fetch(\n  `${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/conversations?client_id=eq.${client.id}&lead_phone=eq.${encodeURIComponent(fromPhone)}&status=eq.open&select=id,status&order=created_at.desc&limit=1`,\n  { headers: { apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY, Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}` } }\n);\nconst convs = await convRes.json();\nif (!convs.length) return [{ json: { skip: true, reason: 'No open conversation' } }];\nconst conv = convs[0];\n\n// Insert inbound message\nawait fetch(`${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/messages`, {\n  method: 'POST',\n  headers: {\n    apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY,\n    Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}`,\n    'Content-Type': 'application/json',\n  },\n  body: JSON.stringify({ conversation_id: conv.id, direction: 'inbound', body: msgText, message_type: 'inbound', twilio_sid: body.MessageSid }),\n});\n\n// Check last outbound for referral context\nconst lastMsgRes = await fetch(\n  `${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/messages?conversation_id=eq.${conv.id}&direction=eq.outbound&order=created_at.desc&limit=1&select=message_type`,\n  { headers: { apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY, Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}` } }\n);\nconst lastMsgs = await lastMsgRes.json();\nconst lastType = lastMsgs[0]?.message_type;\n\nif (lastType === 'referral') {\n  // This reply is a referral name\n  const code = 'REF-' + Math.random().toString(36).toUpperCase().slice(2, 8);\n  await fetch(`${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/referrals`, {\n    method: 'POST',\n    headers: {\n      apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY,\n      Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}`,\n      'Content-Type': 'application/json',\n    },\n    body: JSON.stringify({ client_id: client.id, conversation_id: conv.id, referral_name: msgText, referral_code: code }),\n  });\n  // Send confirmation\n  await fetch(`https://api.twilio.com/2010-04-01/Accounts/${$vars.RESPONDFALL_TWILIO_ACCOUNT_SID}/Messages.json`, {\n    method: 'POST',\n    headers: {\n      'Content-Type': 'application/x-www-form-urlencoded',\n      Authorization: `Basic ${btoa($vars.RESPONDFALL_TWILIO_ACCOUNT_SID + ':' + $vars.RESPONDFALL_TWILIO_AUTH_TOKEN)}`,\n    },\n    body: new URLSearchParams({ To: fromPhone, From: client.respondfall_number, Body: `Thanks for the referral! Your friend's code is ${code}. We'll reach out to them soon!` }).toString(),\n  });\n  return [{ json: { handled: 'referral', code } }];\n}\n\n// AI qualification via Claude\nconst aiRes = await fetch('https://api.anthropic.com/v1/messages', {\n  method: 'POST',\n  headers: {\n    'x-api-key': $vars.RESPONDFALL_ANTHROPIC_API_KEY,\n    'anthropic-version': '2023-06-01',\n    'Content-Type': 'application/json',\n  },\n  body: JSON.stringify({\n    model: 'claude-sonnet-4-6',\n    max_tokens: 300,\n    system: `You are a friendly SMS assistant for ${client.business_name}. Your job is to qualify missed-call leads via text. Keep replies to 1-2 sentences max. Be warm and professional. If the lead clearly wants a quote/appointment, say so in your reply and end with a question to get their details. If they have a question you can't answer, say a team member will follow up shortly. Always reply in plain SMS-friendly text, no markdown.`,\n    messages: [{ role: 'user', content: msgText }],\n  }),\n});\nconst aiData = await aiRes.json();\nconst aiReply = aiData.content?.[0]?.text ?? \"Thanks for reaching out! A team member will follow up with you shortly.\";\n\n// Classify intent\nconst intentKeywords = ['quote', 'price', 'appointment', 'schedule', 'book', 'cost', 'estimate', 'available'];\nconst isHighIntent = intentKeywords.some(kw => msgUpper.includes(kw.toUpperCase()));\nconst isQuestion = msgText.includes('?');\n\n// Send AI reply\nconst replySms = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${$vars.RESPONDFALL_TWILIO_ACCOUNT_SID}/Messages.json`, {\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/x-www-form-urlencoded',\n    Authorization: `Basic ${btoa($vars.RESPONDFALL_TWILIO_ACCOUNT_SID + ':' + $vars.RESPONDFALL_TWILIO_AUTH_TOKEN)}`,\n  },\n  body: new URLSearchParams({ To: fromPhone, From: client.respondfall_number, Body: aiReply }).toString(),\n});\nconst replyData = await replySms.json();\n\n// Insert AI reply message\nawait fetch(`${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/messages`, {\n  method: 'POST',\n  headers: {\n    apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY,\n    Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}`,\n    'Content-Type': 'application/json',\n  },\n  body: JSON.stringify({ conversation_id: conv.id, direction: 'outbound', body: aiReply, message_type: 'ai_reply', twilio_sid: replyData.sid }),\n});\n\n// If it's a question, alert owner via SMS\nif (isQuestion) {\n  const ownerRes = await fetch(\n    `${$vars.RESPONDFALL_SUPABASE_URL}/rest/v1/agency_owners?id=eq.${client.agency_owner_id}&select=notification_phone`,\n    { headers: { apikey: $vars.RESPONDFALL_SUPABASE_SERVICE_KEY, Authorization: `Bearer ${$vars.RESPONDFALL_SUPABASE_SERVICE_KEY}` } }\n  );\n  const owners = await ownerRes.json();\n  const ownerPhone = owners[0]?.notification_phone;\n  if (ownerPhone) {\n    await fetch(`https://api.twilio.com/2010-04-01/Accounts/${$vars.RESPONDFALL_TWILIO_ACCOUNT_SID}/Messages.json`, {\n      method: 'POST',\n      headers: {\n        'Content-Type': 'application/x-www-form-urlencoded',\n        Authorization: `Basic ${btoa($vars.RESPONDFALL_TWILIO_ACCOUNT_SID + ':' + $vars.RESPONDFALL_TWILIO_AUTH_TOKEN)}`,\n      },\n      body: new URLSearchParams({ To: ownerPhone, From: client.respondfall_number, Body: `[Respondfall] Lead question from ${fromPhone}: \"${msgText}\" — log in to reply.` }).toString(),\n    });\n  }\n}\n\nreturn [{ json: { handled: 'sms', isHighIntent, aiReply } }];"
+      },
+      "id": "handle-sms",
+      "name": "Handle Inbound SMS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 600]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>",
+        "options": { "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/xml" }] } }
+      },
+      "id": "respond-empty-twiml",
+      "name": "Respond Empty TwiML",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 900]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>",
+        "options": { "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/xml" }] } }
+      },
+      "id": "respond-sms-done",
+      "name": "Respond SMS Done",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1680, 600]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseCode": 403,
+        "responseBody": "Forbidden",
+        "options": {}
+      },
+      "id": "respond-forbidden",
+      "name": "Respond Forbidden",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 700]
+    },
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [480, 700]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Validate Twilio Signature", "type": "main", "index": 0 }]]
+    },
+    "Validate Twilio Signature": {
+      "main": [[{ "node": "Route: Voice or SMS?", "type": "main", "index": 0 }]]
+    },
+    "Route: Voice or SMS?": {
+      "main": [
+        [{ "node": "Handle Voice Call", "type": "main", "index": 0 }],
+        [{ "node": "Handle Status / SMS", "type": "main", "index": 0 }]
+      ]
+    },
+    "Handle Voice Call": {
+      "main": [[{ "node": "Respond TwiML", "type": "main", "index": 0 }]]
+    },
+    "Handle Status / SMS": {
+      "main": [[{ "node": "Is SMS?", "type": "main", "index": 0 }]]
+    },
+    "Is SMS?": {
+      "main": [
+        [{ "node": "Handle Inbound SMS", "type": "main", "index": 0 }],
+        [{ "node": "Respond Empty TwiML", "type": "main", "index": 0 }]
+      ]
+    },
+    "Handle Inbound SMS": {
+      "main": [[{ "node": "Respond SMS Done", "type": "main", "index": 0 }]]
+    },
+    "Error Handler": {
+      "main": [[{ "node": "Respond Forbidden", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "respondfall" }]
+}
