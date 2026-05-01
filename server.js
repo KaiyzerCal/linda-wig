@@ -551,7 +551,7 @@ app.post('/linda/chat', async (req, res) => {
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
+      max_tokens: 2048,
       system,
       messages
     });
@@ -715,7 +715,7 @@ Open with a statement about what matters most today. Under 120 words. Pure signa
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 512,
+      max_tokens: 1024,
       system: [{ type: 'text', text: LINDA_SYSTEM, cache_control: { type: 'ephemeral' } }],
       messages: [{ role: 'user', content: briefPrompt }]
     });
@@ -965,6 +965,14 @@ const PANTHEON_RSS_FEEDS = [
   'https://feeds.bbci.co.uk/news/world/rss.xml',
   'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',
   'https://feeds.reuters.com/reuters/topNews',
+  'https://www.theguardian.com/world/rss',
+  'https://www.aljazeera.com/xml/rss/all.xml',
+  'https://feeds.apnews.com/rss/apf-topnews',
+  'https://feeds.npr.org/1004/rss.xml',
+  'https://rss.dw.com/rdf/rss-en-world',
+  'https://www.france24.com/en/rss',
+  'https://feeds.washingtonpost.com/rss/world',
+  'https://feeds.skynews.com/feeds/rss/world.xml',
 ];
 
 function parseRssItems(xml) {
@@ -982,7 +990,7 @@ function parseRssItems(xml) {
   return items;
 }
 
-async function callPersona(systemPrompt, userMessage, maxTokens = 280) {
+async function callPersona(systemPrompt, userMessage, maxTokens = 420) {
   const res = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: maxTokens,
@@ -1011,7 +1019,7 @@ async function runPantheonSession(personas, triggerType, headline, sourceUrl, fo
     triggerContent = '';
   }
 
-  const thothOpenRaw = await callPersona(thoth.system_prompt, thothOpenPrompt, 380);
+  const thothOpenRaw = await callPersona(thoth.system_prompt, thothOpenPrompt, 500);
 
   let frame, question, topic;
   if (triggerType === 'news') {
@@ -1073,7 +1081,7 @@ async function runPantheonSession(personas, triggerType, headline, sourceUrl, fo
 
   let thothClose;
   try {
-    thothClose = await callPersona(thoth.system_prompt, thothClosePrompt, 220);
+    thothClose = await callPersona(thoth.system_prompt, thothClosePrompt, 320);
   } catch (e) {
     thothClose = `The record is complete. Session ${sessionCount || '?'}. The feed does not stop.`;
   }
@@ -1191,8 +1199,8 @@ async function handlePantheonTrigger(req, res) {
     const forceTopic = req.body?.topic || req.query?.topic || null;
 
     if (!toRun.length) {
-      const twoHoursAgo = new Date(Date.now() - 105 * 60 * 1000).toISOString();
-      const { data: recent } = await supabase.from('pantheon_sessions').select('id').gte('created_at', twoHoursAgo).limit(1);
+      const sixHoursAgo = new Date(Date.now() - 330 * 60 * 1000).toISOString();
+      const { data: recent } = await supabase.from('pantheon_sessions').select('id').gte('created_at', sixHoursAgo).limit(1);
       if (!recent?.length || forceHistorical || forceTopic) triggerType = 'historical';
       else return res.json({ message: 'No new headlines and recent session exists. Chamber is resting.', sessions_queued: 0 });
     }
@@ -1380,8 +1388,8 @@ async function pantheonAutoTrigger() {
         await runPantheonSession(personas, 'news', item.title, item.link);
       }
     } else {
-      const twoHoursAgo = new Date(Date.now() - 105 * 60 * 1000).toISOString();
-      const { data: recent } = await supabase.from('pantheon_sessions').select('id').gte('created_at', twoHoursAgo).limit(1);
+      const sixHoursAgo = new Date(Date.now() - 330 * 60 * 1000).toISOString();
+      const { data: recent } = await supabase.from('pantheon_sessions').select('id').gte('created_at', sixHoursAgo).limit(1);
       if (!recent?.length) {
         console.log('[Pantheon] No new headlines. Triggering historical session.');
         await runPantheonSession(personas, 'historical', null, null);
