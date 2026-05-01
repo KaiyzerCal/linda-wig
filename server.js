@@ -990,9 +990,9 @@ function parseRssItems(xml) {
   return items;
 }
 
-async function callPersona(systemPrompt, userMessage, maxTokens = 420) {
+async function callPersona(systemPrompt, userMessage, maxTokens = 420, model = 'claude-haiku-4-5-20251001') {
   const res = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model,
     max_tokens: maxTokens,
     system: systemPrompt,
     messages: [{ role: 'user', content: userMessage }],
