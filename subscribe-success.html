@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PANTHEON — Welcome</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Georgia', serif;
+      background: #0a0a0a;
+      color: #e2ddd4;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px;
+    }
+
+    .wordmark {
+      font-size: 0.72rem;
+      font-weight: normal;
+      letter-spacing: 0.35em;
+      color: #333;
+      text-transform: uppercase;
+      margin-bottom: 48px;
+    }
+
+    .status {
+      font-size: 0.6rem;
+      letter-spacing: 0.28em;
+      color: #2a2a2a;
+      text-transform: uppercase;
+      margin-bottom: 18px;
+    }
+
+    .status.active { color: #3a5c3a; }
+
+    h1 {
+      font-size: clamp(2rem, 8vw, 3rem);
+      font-weight: normal;
+      letter-spacing: 0.12em;
+      color: #c8c2b8;
+      text-align: center;
+      margin-bottom: 16px;
+    }
+
+    .sub {
+      font-size: 0.85rem;
+      color: #555;
+      text-align: center;
+      margin-bottom: 40px;
+      line-height: 1.6;
+    }
+
+    .sub span {
+      color: #888;
+    }
+
+    .enter-btn {
+      background: none;
+      border: 1px solid #222;
+      color: #666;
+      font-family: 'Georgia', serif;
+      font-size: 0.78rem;
+      letter-spacing: 0.18em;
+      padding: 13px 28px;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: border-color 0.15s, color 0.15s;
+    }
+
+    .enter-btn:hover {
+      border-color: #555;
+      color: #c8c2b8;
+    }
+
+    .countdown {
+      font-size: 0.58rem;
+      letter-spacing: 0.15em;
+      color: #222;
+      margin-top: 18px;
+      text-transform: uppercase;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="wordmark">Pantheon</div>
+
+  <p class="status" id="status">Confirming access</p>
+
+  <h1 id="headline">You're in.</h1>
+
+  <p class="sub" id="sub-text">
+    The council is convened.<br>
+    <span id="email-display"></span>
+  </p>
+
+  <button class="enter-btn" onclick="enterFeed()">Enter the feed →</button>
+
+  <p class="countdown" id="countdown"></p>
+
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const sessionId = params.get('session_id');
+  let redirectTimer;
+
+  async function confirm() {
+    if (!sessionId) {
+      redirectAfter(3);
+      return;
+    }
+
+    try {
+      const res = await fetch(`/pantheon/session?session_id=${sessionId}`);
+      const { email } = await res.json();
+      if (email) {
+        localStorage.setItem('pantheon_email', email);
+        document.getElementById('email-display').textContent = email;
+        document.getElementById('status').textContent = 'Access confirmed';
+        document.getElementById('status').classList.add('active');
+      }
+    } catch {}
+
+    redirectAfter(4);
+  }
+
+  function redirectAfter(seconds) {
+    let remaining = seconds;
+    document.getElementById('countdown').textContent = `Entering in ${remaining}…`;
+    redirectTimer = setInterval(() => {
+      remaining--;
+      if (remaining <= 0) {
+        clearInterval(redirectTimer);
+        enterFeed();
+      } else {
+        document.getElementById('countdown').textContent = `Entering in ${remaining}…`;
+      }
+    }, 1000);
+  }
+
+  function enterFeed() {
+    clearInterval(redirectTimer);
+    window.location.href = '/pantheon';
+  }
+
+  confirm();
+</script>
+
+</body>
+</html>

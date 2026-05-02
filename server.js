@@ -1287,8 +1287,8 @@ app.post('/pantheon/subscribe', async (req, res) => {
       mode: plan === 'monthly' ? 'subscription' : 'payment',
       customer_email: email,
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${origin}/pantheon?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${origin}/pantheon`,
+      success_url: `${origin}/subscribe-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}/`,
     });
     res.json({ url: session.url });
   } catch (err) {
@@ -1350,8 +1350,15 @@ app.get('/pantheon/session', async (req, res) => {
 
 // ─── INTERFACE ───────────────────────────────────────────────────────────────
 
-// Interface
 app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'landing.html'));
+});
+
+app.get('/subscribe-success', (req, res) => {
+  res.sendFile(path.join(__dirname, 'subscribe-success.html'));
+});
+
+app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'interface.html'));
 });
 
