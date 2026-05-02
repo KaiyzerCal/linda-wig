@@ -2,6 +2,8 @@ const VANTARA_SUPABASE_URL = process.env.VANTARA_SUPABASE_URL || 'https://cofrsq
 const VANTARA_SUPABASE_KEY = process.env.VANTARA_SUPABASE_ANON_KEY;
 const VANTARA_MAVIS_INGEST = `${VANTARA_SUPABASE_URL}/functions/v1/mavis-ingest`;
 
+const CALVIN_TELEGRAM_ID = '7190696416';
+
 const INTELLIGENCE_TASKS = [
   'persona-create',
   'council-decision',
@@ -11,6 +13,10 @@ const INTELLIGENCE_TASKS = [
   'strategic-planning',
   'content-factory',
 ];
+
+function isCalvin(telegramUserId) {
+  return telegramUserId === CALVIN_TELEGRAM_ID;
+}
 
 function needsMavisIntelligence(taskType, message) {
   return INTELLIGENCE_TASKS.includes(taskType) ||
@@ -34,8 +40,12 @@ async function postToMavisIngest(action) {
   return response.json();
 }
 
-async function routeTask(taskType, message, payload) {
+async function routeTask(taskType, message, payload, telegramUserId) {
   if (needsMavisIntelligence(taskType, message)) {
+    if (!isCalvin(telegramUserId)) {
+      return { routed_to: 'DENIED', error: 'Only Calvin can access MAVIS routes' };
+    }
+
     console.log(`[LINDA] Routing ${taskType} to MAVIS`);
     try {
       const mavisResponse = await postToMavisIngest({

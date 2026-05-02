@@ -960,11 +960,11 @@ app.post('/linda/zapier/webhook', async (req, res) => {
   }
 });
 
-// MAVIS routing — Linda decides whether to handle or escalate to MAVIS intelligence
+// MAVIS routing — Linda decides whether to handle or escalate to MAVIS intelligence (Calvin only)
 app.post('/linda/route', async (req, res) => {
-  const { task_type, message, payload } = req.body;
+  const { task_type, message, payload, telegram_user_id } = req.body;
   try {
-    const routingDecision = await routeTask(task_type, message, payload);
+    const routingDecision = await routeTask(task_type, message, payload, telegram_user_id);
     res.json({
       success: true,
       routing_decision: routingDecision,
