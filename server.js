@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const Stripe = require('stripe');
 const { Resend } = require('resend');
+const { routeTask } = require('./src/lib/mavis-integration');
 
 const app = express();
 app.use(cors());
@@ -956,6 +957,21 @@ app.post('/linda/zapier/webhook', async (req, res) => {
     res.json({ received: true, timestamp: new Date().toISOString() });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// MAVIS routing — Linda decides whether to handle or escalate to MAVIS intelligence
+app.post('/linda/route', async (req, res) => {
+  const { task_type, message, payload } = req.body;
+  try {
+    const routingDecision = await routeTask(task_type, message, payload);
+    res.json({
+      success: true,
+      routing_decision: routingDecision,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
