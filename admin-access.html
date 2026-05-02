@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pantheon Access — Admin</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Georgia', serif;
+      background: #0a0a0a;
+      color: #e2ddd4;
+      min-height: 100vh;
+      padding: 48px 24px;
+    }
+
+    .container { max-width: 480px; margin: 0 auto; }
+
+    .wordmark {
+      font-size: 0.65rem;
+      letter-spacing: 0.3em;
+      color: #333;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    h1 {
+      font-size: 1.1rem;
+      font-weight: normal;
+      letter-spacing: 0.12em;
+      color: #888;
+      margin-bottom: 40px;
+    }
+
+    .section {
+      background: #0e0e0e;
+      border: 1px solid #1a1a1a;
+      padding: 24px;
+      margin-bottom: 16px;
+    }
+
+    .section-title {
+      font-size: 0.58rem;
+      letter-spacing: 0.25em;
+      color: #333;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.58rem;
+      letter-spacing: 0.18em;
+      color: #333;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+      margin-top: 14px;
+    }
+
+    label:first-of-type { margin-top: 0; }
+
+    input {
+      width: 100%;
+      background: #0a0a0a;
+      border: 1px solid #1e1e1e;
+      color: #e2ddd4;
+      font-family: 'Georgia', serif;
+      font-size: 0.85rem;
+      padding: 9px 11px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    input:focus { border-color: #333; }
+    input::placeholder { color: #222; }
+
+    .row { display: flex; gap: 8px; margin-top: 16px; }
+
+    button {
+      flex: 1;
+      background: none;
+      border: 1px solid #1e1e1e;
+      color: #555;
+      font-family: 'Georgia', serif;
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      padding: 10px;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+
+    button:hover { border-color: #444; color: #c8c2b8; }
+    button.danger:hover { border-color: #5c2a2a; color: #a06060; }
+    button:disabled { opacity: 0.3; pointer-events: none; }
+
+    .result {
+      margin-top: 12px;
+      font-size: 0.72rem;
+      min-height: 1.1em;
+      line-height: 1.5;
+    }
+
+    .result.ok { color: #3a6a3a; }
+    .result.err { color: #7a3a3a; }
+
+    .back {
+      display: inline-block;
+      font-size: 0.6rem;
+      letter-spacing: 0.18em;
+      color: #222;
+      text-decoration: none;
+      text-transform: uppercase;
+      margin-top: 32px;
+      transition: color 0.15s;
+    }
+
+    .back:hover { color: #666; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <p class="wordmark">Pantheon</p>
+  <h1>Access Management</h1>
+
+  <!-- Auth -->
+  <div class="section">
+    <p class="section-title">Calvin UUID (required)</p>
+    <input type="password" id="calvin-uuid" placeholder="your UUID" autocomplete="off">
+  </div>
+
+  <!-- Grant -->
+  <div class="section">
+    <p class="section-title">Grant Access</p>
+
+    <label for="grant-email">Email</label>
+    <input type="email" id="grant-email" placeholder="user@domain.com">
+
+    <label for="grant-months">Months</label>
+    <input type="number" id="grant-months" placeholder="12" value="12" min="1" max="999">
+
+    <div class="row">
+      <button onclick="grant()">Grant Access</button>
+    </div>
+    <div class="result" id="grant-result"></div>
+  </div>
+
+  <!-- Revoke -->
+  <div class="section">
+    <p class="section-title">Revoke Access</p>
+
+    <label for="revoke-email">Email</label>
+    <input type="email" id="revoke-email" placeholder="user@domain.com">
+
+    <div class="row">
+      <button class="danger" onclick="revoke()">Revoke Access</button>
+    </div>
+    <div class="result" id="revoke-result"></div>
+  </div>
+
+  <a class="back" href="/admin">← Back to admin</a>
+
+</div>
+<script>
+  function uuid() { return document.getElementById('calvin-uuid').value.trim(); }
+
+  async function grant() {
+    const el = document.getElementById('grant-result');
+    el.className = 'result';
+    el.textContent = 'Working…';
+    const email = document.getElementById('grant-email').value.trim();
+    const months = document.getElementById('grant-months').value || '12';
+    try {
+      const res = await fetch('/admin/grant-access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ calvin_uuid: uuid(), email, months: parseInt(months) }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        el.className = 'result ok';
+        const until = new Date(data.access_until).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        el.textContent = `✓ ${data.email} granted access until ${until}`;
+        document.getElementById('grant-email').value = '';
+      } else {
+        el.className = 'result err';
+        el.textContent = data.error || 'Failed.';
+      }
+    } catch {
+      el.className = 'result err';
+      el.textContent = 'Network error.';
+    }
+  }
+
+  async function revoke() {
+    const el = document.getElementById('revoke-result');
+    el.className = 'result';
+    el.textContent = 'Working…';
+    const email = document.getElementById('revoke-email').value.trim();
+    try {
+      const res = await fetch('/admin/revoke-access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ calvin_uuid: uuid(), email }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        el.className = 'result ok';
+        el.textContent = `✓ ${data.email} access revoked.`;
+        document.getElementById('revoke-email').value = '';
+      } else {
+        el.className = 'result err';
+        el.textContent = data.error || 'Failed.';
+      }
+    } catch {
+      el.className = 'result err';
+      el.textContent = 'Network error.';
+    }
+  }
+
+  // Enter key support
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const active = document.activeElement?.id;
+    if (active === 'grant-email' || active === 'grant-months') grant();
+    if (active === 'revoke-email') revoke();
+  });
+</script>
+</body>
+</html>
