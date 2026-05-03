@@ -707,7 +707,34 @@
     return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+  async function verifyAccess() {
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get('session_id');
+
+    if (sessionId) {
+      try {
+        const res = await fetch(`/pantheon/session?session_id=${sessionId}`);
+        const { email } = await res.json();
+        if (email) localStorage.setItem('pantheon_email', email);
+      } catch {}
+      window.history.replaceState({}, '', '/pantheon');
+    }
+
+    const email = localStorage.getItem('pantheon_email');
+    if (!email) { window.location.href = '/'; return false; }
+
+    try {
+      const res = await fetch(`/pantheon/verify?email=${encodeURIComponent(email)}`);
+      const { valid } = await res.json();
+      if (!valid) { localStorage.removeItem('pantheon_email'); window.location.href = '/'; return false; }
+    } catch { window.location.href = '/'; return false; }
+
+    return true;
+  }
+
   async function init() {
+    const allowed = await verifyAccess();
+    if (!allowed) return;
     try {
       setupObservers();
       await Promise.all([extendDown(), loadSessionCount()]);

@@ -1287,8 +1287,8 @@ app.post('/pantheon/subscribe', async (req, res) => {
       mode: plan === 'monthly' ? 'subscription' : 'payment',
       customer_email: email,
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${origin}/pantheon?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${origin}/pantheon`,
+      success_url: `${origin}/subscribe-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}/`,
     });
     res.json({ url: session.url });
   } catch (err) {
@@ -1350,9 +1350,59 @@ app.get('/pantheon/session', async (req, res) => {
 
 // ─── INTERFACE ───────────────────────────────────────────────────────────────
 
-// Interface
 app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'landing.html'));
+});
+
+app.get('/subscribe-success', (req, res) => {
+  res.sendFile(path.join(__dirname, 'subscribe-success.html'));
+});
+
+app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'interface.html'));
+});
+
+app.get('/admin/access', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin-access.html'));
+});
+
+// Grant Pantheon access — Calvin only (requires CALVIN_UUID)
+app.post('/admin/grant-access', async (req, res) => {
+  const { calvin_uuid, email, months } = req.body;
+  if (!process.env.CALVIN_UUID || calvin_uuid !== process.env.CALVIN_UUID) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+  if (!email) return res.status(400).json({ error: 'email required' });
+  const m = parseInt(months) || 12;
+  const accessUntil = new Date(Date.now() + m * 30 * 24 * 60 * 60 * 1000).toISOString();
+  try {
+    const { error } = await supabase
+      .from('pantheon_subscribers')
+      .upsert([{ email, plan: 'granted', access_until: accessUntil }], { onConflict: 'email' });
+    if (error) throw error;
+    res.json({ success: true, email, access_until: accessUntil });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Revoke Pantheon access — Calvin only
+app.post('/admin/revoke-access', async (req, res) => {
+  const { calvin_uuid, email } = req.body;
+  if (!process.env.CALVIN_UUID || calvin_uuid !== process.env.CALVIN_UUID) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+  if (!email) return res.status(400).json({ error: 'email required' });
+  try {
+    const { error } = await supabase
+      .from('pantheon_subscribers')
+      .update({ access_until: new Date().toISOString() })
+      .eq('email', email);
+    if (error) throw error;
+    res.json({ success: true, email, revoked: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
@@ -1418,4 +1468,4 @@ async function pantheonAutoTrigger() {
   }
 }
 
-setInterval(pantheonAutoTrigger, 90 * 60 * 1000); // every 90 minutes
+// Internal auto-trigger disabled — use cron-job.org → GET /pantheon/trigger to control cadence
