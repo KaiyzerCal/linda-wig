@@ -1468,4 +1468,4 @@ async function pantheonAutoTrigger() {
   }
 }
 
-setInterval(pantheonAutoTrigger, 90 * 60 * 1000); // every 90 minutes
+// Internal auto-trigger disabled — use cron-job.org → GET /pantheon/trigger to control cadence
