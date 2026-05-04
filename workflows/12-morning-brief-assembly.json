@@ -1,0 +1,106 @@
+{
+  "name": "12 — Morning Brief Assembly",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 6 * * *" }] } },
+      "id": "cron", "name": "6:00am Daily", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "wig_daily_metrics",
+        "filterType": "string", "filterString": "date=eq.{{ new Date(Date.now()-86400000).toISOString().slice(0,10) }}"
+      },
+      "id": "get-yesterday", "name": "Get Yesterday Metrics", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 200],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "itg_institutional_leads",
+        "filterType": "string", "filterString": "status=eq.quoted&follow_up_1_sent_at=is.null"
+      },
+      "id": "get-inst-pending", "name": "Get Pending Institutional", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 380],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "linda_outreach_prospects",
+        "filterType": "string", "filterString": "response_received=eq.true&converted=eq.false&created_at=gt.{{ new Date(Date.now()-7*86400000).toISOString() }}"
+      },
+      "id": "get-responses", "name": "Get Recent Responses", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 560],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "kill_conditions",
+        "filterType": "string", "filterString": "status=eq.warning"
+      },
+      "id": "get-warnings", "name": "Get Kill Condition Warnings", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 740],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const metrics = $('Get Yesterday Metrics').first()?.json || {};\nconst institutional = $('Get Pending Institutional').all().map(r => r.json);\nconst responses = $('Get Recent Responses').all().map(r => r.json);\nconst warnings = $('Get Kill Condition Warnings').all().map(r => r.json);\n\nreturn [{ json: {\n  data: {\n    date: new Date(Date.now()-86400000).toISOString().slice(0,10),\n    metrics,\n    institutional_pending: institutional.length,\n    recent_responses: responses.length,\n    kill_warnings: warnings.map(w => `${w.workflow_name}: ${w.metric_name} at ${w.current_value}%`)\n  }\n}}];"
+      },
+      "id": "assemble-data", "name": "Assemble Brief Data", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [760, 460]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "system_prompts",
+        "filterType": "string", "filterString": "prompt_name=eq.generate_morning_brief"
+      },
+      "id": "get-prompt", "name": "Get Brief Prompt", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1020, 460],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+          { "name": "anthropic-version", "value": "2023-06-01" }
+        ]},
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "model", "value": "={{ $('Get Brief Prompt').item.json.model }}" },
+          { "name": "max_tokens", "value": "={{ $('Get Brief Prompt').item.json.max_tokens }}" },
+          { "name": "system", "value": "={{ $('Get Brief Prompt').item.json.content }}" },
+          { "name": "messages", "value": "=[{\"role\": \"user\", \"content\": {{ JSON.stringify($('Assemble Brief Data').item.json.data) }}}]" }
+        ]}
+      },
+      "id": "gen-brief", "name": "Generate Brief (Claude)", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, 460]
+    },
+    {
+      "parameters": {
+        "jsCode": "const brief = $input.first().json.content?.[0]?.text || 'Brief generation failed.';\nreturn [{ json: { brief } }];"
+      },
+      "id": "extract-brief", "name": "Extract Brief Text", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1540, 460]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LINDA_URL }}/linda/zapier/webhook",
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "event", "value": "morning_brief" },
+          { "name": "brief", "value": "={{ $json.brief }}" },
+          { "name": "date", "value": "={{ new Date(Date.now()-86400000).toISOString().slice(0,10) }}" }
+        ]}
+      },
+      "id": "send-to-linda", "name": "Send to Linda (Telegram dispatch)", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1800, 460]
+    }
+  ],
+  "connections": {
+    "6:00am Daily":               { "main": [[{ "node": "Get Yesterday Metrics", "type": "main", "index": 0 }, { "node": "Get Pending Institutional", "type": "main", "index": 0 }, { "node": "Get Recent Responses", "type": "main", "index": 0 }, { "node": "Get Kill Condition Warnings", "type": "main", "index": 0 }]] },
+    "Get Yesterday Metrics":      { "main": [[{ "node": "Assemble Brief Data", "type": "main", "index": 0 }]] },
+    "Get Pending Institutional":  { "main": [[{ "node": "Assemble Brief Data", "type": "main", "index": 0 }]] },
+    "Get Recent Responses":       { "main": [[{ "node": "Assemble Brief Data", "type": "main", "index": 0 }]] },
+    "Get Kill Condition Warnings":{ "main": [[{ "node": "Assemble Brief Data", "type": "main", "index": 0 }]] },
+    "Assemble Brief Data":        { "main": [[{ "node": "Get Brief Prompt", "type": "main", "index": 0 }]] },
+    "Get Brief Prompt":           { "main": [[{ "node": "Generate Brief (Claude)", "type": "main", "index": 0 }]] },
+    "Generate Brief (Claude)":    { "main": [[{ "node": "Extract Brief Text", "type": "main", "index": 0 }]] },
+    "Extract Brief Text":         { "main": [[{ "node": "Send to Linda (Telegram dispatch)", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "morning-brief" }]
+}

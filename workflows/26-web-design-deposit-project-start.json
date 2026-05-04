@@ -1,0 +1,83 @@
+{
+  "name": "26 — Web Design Deposit → Project Start",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wp-deposit-received", "responseMode": "lastNode", "options": {} },
+      "id": "webhook", "name": "Webhook: Deposit Received (Stripe)", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $input.first().json.body || $input.first().json;\nconst meta = b.data?.object?.metadata || b.metadata || {};\nreturn [{ json: {\n  lead_id: meta.lead_id || b.lead_id || '',\n  contact_email: b.data?.object?.receipt_email || b.email || '',\n  deposit_amount: parseFloat((b.data?.object?.amount || b.amount || 0) / 100),\n  payment_intent: b.data?.object?.id || b.payment_intent || ''\n}}];"
+      },
+      "id": "normalize", "name": "Normalize Stripe Payload", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "wp_qualified_leads",
+        "filterType": "string", "filterString": "id=eq.{{ $json.lead_id }}"
+      },
+      "id": "get-lead", "name": "Get Lead", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [760, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "insert", "schema": "public", "table": "wp_projects",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "lead_id": "={{ $('Normalize Stripe Payload').item.json.lead_id }}",
+          "business_name": "={{ $('Get Lead').item.json.business_name }}",
+          "contact_name": "={{ $('Get Lead').item.json.contact_name }}",
+          "contact_email": "={{ $('Get Lead').item.json.email }}",
+          "contact_phone": "={{ $('Get Lead').item.json.phone }}",
+          "total_value": "={{ $('Get Lead').item.json.proposal_amount }}",
+          "deposit_paid": "={{ $('Normalize Stripe Payload').item.json.deposit_amount }}",
+          "balance_due": "={{ ($('Get Lead').item.json.proposal_amount || 0) - $('Normalize Stripe Payload').item.json.deposit_amount }}",
+          "start_date": "={{ $today }}",
+          "status": "active"
+        }}
+      },
+      "id": "create-project", "name": "Create wp_projects", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1020, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "wp_qualified_leads",
+        "filterType": "string", "filterString": "id=eq.{{ $('Normalize Stripe Payload').item.json.lead_id }}",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "deposit_received": true,
+          "deposit_amount": "={{ $('Normalize Stripe Payload').item.json.deposit_amount }}",
+          "deposit_received_at": "={{ $now }}",
+          "status": "active"
+        }}
+      },
+      "id": "update-lead", "name": "Update Lead Status", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1280, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LINDA_URL }}/linda/zapier/webhook",
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "event", "value": "wp_project_started" },
+          { "name": "business_name", "value": "={{ $('Get Lead').item.json.business_name }}" },
+          { "name": "deposit", "value": "={{ $('Normalize Stripe Payload').item.json.deposit_amount }}" }
+        ]}
+      },
+      "id": "notify", "name": "Notify Calvin", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1540, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={ \"status\": \"ok\" }" },
+      "id": "respond", "name": "Respond 200", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1, "position": [1800, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: Deposit Received (Stripe)": { "main": [[{ "node": "Normalize Stripe Payload", "type": "main", "index": 0 }]] },
+    "Normalize Stripe Payload":           { "main": [[{ "node": "Get Lead", "type": "main", "index": 0 }]] },
+    "Get Lead":                           { "main": [[{ "node": "Create wp_projects", "type": "main", "index": 0 }]] },
+    "Create wp_projects":                 { "main": [[{ "node": "Update Lead Status", "type": "main", "index": 0 }]] },
+    "Update Lead Status":                 { "main": [[{ "node": "Notify Calvin", "type": "main", "index": 0 }]] },
+    "Notify Calvin":                      { "main": [[{ "node": "Respond 200", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "web-design" }, { "name": "billing" }]
+}

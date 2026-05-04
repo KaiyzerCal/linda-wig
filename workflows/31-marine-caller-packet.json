@@ -1,0 +1,85 @@
+{
+  "name": "31 — Marine Caller Packet Generation",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "hours", "hoursInterval": 4 }] } },
+      "id": "cron", "name": "Every 4 Hours", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "marine_qualified_leads",
+        "filterType": "string", "filterString": "status=eq.qualified&caller_packet_sent=eq.false"
+      },
+      "id": "get-leads", "name": "Get Leads Needing Packet", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all();\nreturn rows.filter(r => r.json.contact_name && r.json.phone).map(r => ({ json: r.json }));"
+      },
+      "id": "filter", "name": "Filter Valid", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "system_prompts",
+        "filterType": "string", "filterString": "prompt_name=eq.write_marine_caller_packet"
+      },
+      "id": "get-prompt", "name": "Get Caller Packet Prompt", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1020, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+          { "name": "anthropic-version", "value": "2023-06-01" }
+        ]},
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "model", "value": "claude-sonnet-4-6" },
+          { "name": "max_tokens", "value": "600" },
+          { "name": "system", "value": "={{ $('Get Caller Packet Prompt').item.json.content }}" },
+          { "name": "messages", "value": "=[{\"role\": \"user\", \"content\": \"Contact: {{ $('Filter Valid').item.json.contact_name }}\\nPhone: {{ $('Filter Valid').item.json.phone }}\\nProperty: {{ $('Filter Valid').item.json.property_address }}\\nProject type: {{ ($('Filter Valid').item.json.project_type || []).join(', ') }}\\nProperty type: {{ $('Filter Valid').item.json.property_type }}\\nScope notes: {{ $('Filter Valid').item.json.scope_notes }}\"}]" }
+        ]}
+      },
+      "id": "gen-packet", "name": "Generate Caller Packet", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LINDA_URL }}/linda/zapier/webhook",
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "event", "value": "marine_caller_packet_ready" },
+          { "name": "lead_id", "value": "={{ $('Filter Valid').item.json.id }}" },
+          { "name": "contact_name", "value": "={{ $('Filter Valid').item.json.contact_name }}" },
+          { "name": "phone", "value": "={{ $('Filter Valid').item.json.phone }}" },
+          { "name": "market", "value": "={{ $('Filter Valid').item.json.market }}" },
+          { "name": "packet", "value": "={{ $('Generate Caller Packet').item.json.content?.[0]?.text || '' }}" }
+        ]}
+      },
+      "id": "send-to-matt", "name": "Send Packet to Matt", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1540, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "marine_qualified_leads",
+        "filterType": "string", "filterString": "id=eq.{{ $('Filter Valid').item.json.id }}",
+        "columns": { "mappingMode": "defineBelow", "value": { "caller_packet_sent": true, "caller_packet_sent_at": "={{ $now }}", "status": "packet_sent" } }
+      },
+      "id": "mark-sent", "name": "Mark Packet Sent", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1800, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    }
+  ],
+  "connections": {
+    "Every 4 Hours":             { "main": [[{ "node": "Get Leads Needing Packet", "type": "main", "index": 0 }]] },
+    "Get Leads Needing Packet":  { "main": [[{ "node": "Filter Valid", "type": "main", "index": 0 }]] },
+    "Filter Valid":              { "main": [[{ "node": "Get Caller Packet Prompt", "type": "main", "index": 0 }]] },
+    "Get Caller Packet Prompt":  { "main": [[{ "node": "Generate Caller Packet", "type": "main", "index": 0 }]] },
+    "Generate Caller Packet":    { "main": [[{ "node": "Send Packet to Matt", "type": "main", "index": 0 }]] },
+    "Send Packet to Matt":       { "main": [[{ "node": "Mark Packet Sent", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "marine" }, { "name": "sales" }]
+}

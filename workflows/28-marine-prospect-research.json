@@ -1,0 +1,129 @@
+{
+  "name": "28 — Marine Prospect Research",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 7 * * 1,4" }] } },
+      "id": "cron", "name": "Mon/Thu 7am", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://google.serper.dev/search",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "X-API-KEY", "value": "={{ $env.SERPER_API_KEY }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "q", "value": "waterfront property renovation dock permit Stuart Martin County FL 2026" },
+          { "name": "num", "value": "20" }
+        ]}
+      },
+      "id": "search-stuart", "name": "Search: Stuart Marine Permits", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [500, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://google.serper.dev/search",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "X-API-KEY", "value": "={{ $env.SERPER_API_KEY }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "q", "value": "marina dock seawall repair West Palm Beach Palm Beach County FL 2026" },
+          { "name": "num", "value": "20" }
+        ]}
+      },
+      "id": "search-wpb", "name": "Search: West Palm Marine", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [500, 440]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://google.serper.dev/search",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "X-API-KEY", "value": "={{ $env.SERPER_API_KEY }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "q", "value": "HOA marina boat lift dock replacement Treasure Coast FL" },
+          { "name": "num", "value": "20" }
+        ]}
+      },
+      "id": "search-hoa", "name": "Search: HOA Marine Projects", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [500, 680]
+    },
+    {
+      "parameters": {
+        "jsCode": "const all = $input.all();\nconst leads = [];\nfor (const item of all) {\n  const results = item.json.organic || [];\n  for (const r of results) {\n    const isHOA = r.title?.toLowerCase().includes('hoa') || r.snippet?.toLowerCase().includes('hoa');\n    const isCommercial = r.title?.toLowerCase().includes('marina') || r.title?.toLowerCase().includes('commercial');\n    const market = r.snippet?.toLowerCase().includes('stuart') || r.snippet?.toLowerCase().includes('martin county') ? 'stuart' : 'west_palm_beach';\n    \n    leads.push({ json: {\n      business_name: r.title?.split('-')[0]?.trim() || 'Unknown',\n      address: r.snippet || '',\n      market,\n      lead_type: isHOA ? 'hoa' : isCommercial ? 'commercial' : 'residential',\n      source: 'serper_search',\n      lead_score: isHOA ? 8 : isCommercial ? 7 : 5,\n      status: 'identified'\n    }});\n  }\n}\nreturn leads.slice(0, 25);"
+      },
+      "id": "extract", "name": "Extract Marine Leads", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [760, 440]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "system_prompts",
+        "filterType": "string", "filterString": "prompt_name=eq.score_marine_prospect"
+      },
+      "id": "get-prompt", "name": "Get Scoring Prompt", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1020, 440],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+          { "name": "anthropic-version", "value": "2023-06-01" }
+        ]},
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "model", "value": "claude-haiku-4-5-20251001" },
+          { "name": "max_tokens", "value": "100" },
+          { "name": "system", "value": "={{ $('Get Scoring Prompt').item.json.content }}" },
+          { "name": "messages", "value": "=[{\"role\": \"user\", \"content\": \"Lead: {{ $('Extract Marine Leads').item.json.business_name }}\\nType: {{ $('Extract Marine Leads').item.json.lead_type }}\\nContext: {{ $('Extract Marine Leads').item.json.address }}\"}]" }
+        ]}
+      },
+      "id": "score-lead", "name": "Score Lead (Claude Haiku)", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, 440]
+    },
+    {
+      "parameters": {
+        "jsCode": "const scoreText = $('Score Lead (Claude Haiku)').item.json.content?.[0]?.text || '{}';\nlet score_data;\ntry { score_data = JSON.parse(scoreText); } catch(e) { score_data = { score: 0 }; }\n\nconst lead = $('Extract Marine Leads').item.json;\nif (score_data.score >= 6) {\n  return [{ json: { ...lead, lead_score: score_data.score, priority: score_data.priority || 'standard' } }];\n}\nreturn [];"
+      },
+      "id": "filter-score", "name": "Filter Score >= 6", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1540, 440]
+    },
+    {
+      "parameters": {
+        "operation": "insert", "schema": "public", "table": "marine_leads",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "business_name": "={{ $json.business_name }}",
+          "address": "={{ $json.address }}",
+          "market": "={{ $json.market }}",
+          "lead_type": "={{ $json.lead_type }}",
+          "source": "={{ $json.source }}",
+          "lead_score": "={{ $json.lead_score }}",
+          "status": "identified"
+        }},
+        "additionalFields": { "onConflict": "business_name,market", "skipOnConflict": true }
+      },
+      "id": "insert-lead", "name": "Insert marine_leads", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1800, 440],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "wig_daily_metrics",
+        "filterType": "string", "filterString": "date=eq.{{ $today }}",
+        "columns": { "mappingMode": "defineBelow", "value": { "marine_leads_found": 1 } }
+      },
+      "id": "update-metrics", "name": "Update Metrics", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [2060, 440],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    }
+  ],
+  "connections": {
+    "Mon/Thu 7am":                  { "main": [[{ "node": "Search: Stuart Marine Permits", "type": "main", "index": 0 }, { "node": "Search: West Palm Marine", "type": "main", "index": 0 }, { "node": "Search: HOA Marine Projects", "type": "main", "index": 0 }]] },
+    "Search: Stuart Marine Permits":{ "main": [[{ "node": "Extract Marine Leads", "type": "main", "index": 0 }]] },
+    "Search: West Palm Marine":     { "main": [[{ "node": "Extract Marine Leads", "type": "main", "index": 0 }]] },
+    "Search: HOA Marine Projects":  { "main": [[{ "node": "Extract Marine Leads", "type": "main", "index": 0 }]] },
+    "Extract Marine Leads":         { "main": [[{ "node": "Get Scoring Prompt", "type": "main", "index": 0 }]] },
+    "Get Scoring Prompt":           { "main": [[{ "node": "Score Lead (Claude Haiku)", "type": "main", "index": 0 }]] },
+    "Score Lead (Claude Haiku)":    { "main": [[{ "node": "Filter Score >= 6", "type": "main", "index": 0 }]] },
+    "Filter Score >= 6":            { "main": [[{ "node": "Insert marine_leads", "type": "main", "index": 0 }]] },
+    "Insert marine_leads":          { "main": [[{ "node": "Update Metrics", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "marine" }, { "name": "research" }]
+}

@@ -1,0 +1,79 @@
+{
+  "name": "21 — Web Design Prospect Research",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 8 * * 1,3,5" }] } },
+      "id": "cron", "name": "Mon/Wed/Fri 8am", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://google.serper.dev/search",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "X-API-KEY", "value": "={{ $env.SERPER_API_KEY }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "q", "value": "local business website poor design Stuart FL" },
+          { "name": "num", "value": "20" },
+          { "name": "type", "value": "search" }
+        ]}
+      },
+      "id": "search-1", "name": "Search: Stuart FL Businesses", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [500, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://google.serper.dev/search",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "X-API-KEY", "value": "={{ $env.SERPER_API_KEY }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "q", "value": "local restaurant cafe no website West Palm Beach FL" },
+          { "name": "num", "value": "20" },
+          { "name": "type", "value": "search" }
+        ]}
+      },
+      "id": "search-2", "name": "Search: West Palm Businesses", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [500, 440]
+    },
+    {
+      "parameters": {
+        "jsCode": "const all = $input.all();\nconst leads = [];\nfor (const item of all) {\n  const results = item.json.organic || [];\n  for (const r of results) {\n    if (r.title && r.link && !r.link.includes('yelp') && !r.link.includes('facebook')) {\n      leads.push({ json: {\n        business_name: r.title.split('-')[0].split('|')[0].trim(),\n        website_url: r.link,\n        address: r.snippet || '',\n        source: 'google_search',\n        lead_score: 5,\n        status: 'identified'\n      }});\n    }\n  }\n}\nreturn leads.slice(0, 20);"
+      },
+      "id": "extract-leads", "name": "Extract Leads", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [760, 320]
+    },
+    {
+      "parameters": {
+        "operation": "insert", "schema": "public", "table": "wp_leads",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "business_name": "={{ $json.business_name }}",
+          "website_url": "={{ $json.website_url }}",
+          "address": "={{ $json.address }}",
+          "lead_score": "={{ $json.lead_score }}",
+          "source": "={{ $json.source }}",
+          "status": "identified"
+        }},
+        "additionalFields": { "onConflict": "website_url", "skipOnConflict": true }
+      },
+      "id": "insert-lead", "name": "Insert wp_leads", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1020, 320],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "wig_daily_metrics",
+        "filterType": "string", "filterString": "date=eq.{{ $today }}",
+        "columns": { "mappingMode": "defineBelow", "value": { "wp_leads_found": 1 } }
+      },
+      "id": "update-metrics", "name": "Update Metrics", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1280, 320],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    }
+  ],
+  "connections": {
+    "Mon/Wed/Fri 8am":            { "main": [[{ "node": "Search: Stuart FL Businesses", "type": "main", "index": 0 }, { "node": "Search: West Palm Businesses", "type": "main", "index": 0 }]] },
+    "Search: Stuart FL Businesses":{ "main": [[{ "node": "Extract Leads", "type": "main", "index": 0 }]] },
+    "Search: West Palm Businesses":{ "main": [[{ "node": "Extract Leads", "type": "main", "index": 0 }]] },
+    "Extract Leads":              { "main": [[{ "node": "Insert wp_leads", "type": "main", "index": 0 }]] },
+    "Insert wp_leads":            { "main": [[{ "node": "Update Metrics", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "web-design" }, { "name": "research" }]
+}

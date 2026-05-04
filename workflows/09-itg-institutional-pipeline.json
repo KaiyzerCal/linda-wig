@@ -1,0 +1,93 @@
+{
+  "name": "09 — ITG Institutional Pipeline",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "itg-institutional-inquiry", "responseMode": "lastNode", "options": {} },
+      "id": "webhook", "name": "Webhook: Institutional Inquiry", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $input.first().json.body || $input.first().json;\nreturn [{ json: {\n  org_name: b.org_name || b.organization || '',\n  contact_name: b.contact_name || b.name || '',\n  contact_email: b.contact_email || b.email || '',\n  org_type: b.org_type || b.type || 'nonprofit',\n  copies_needed: parseInt(b.copies_needed || b.quantity || 0),\n  notes: b.notes || b.message || ''\n}}];"
+      },
+      "id": "normalize", "name": "Normalize Payload", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst copies = d.copies_needed;\nlet price_per_copy;\nif (copies >= 500)      price_per_copy = 3.50;\nelse if (copies >= 200) price_per_copy = 4.50;\nelse if (copies >= 50)  price_per_copy = 5.50;\nelse                    price_per_copy = 6.99;\nreturn [{ json: { ...d, quoted_price: +(copies * price_per_copy).toFixed(2), price_per_copy } }];"
+      },
+      "id": "calc-quote", "name": "Calculate Quote", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert", "schema": "public", "table": "itg_institutional_leads",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "org_name": "={{ $json.org_name }}",
+          "contact_name": "={{ $json.contact_name }}",
+          "contact_email": "={{ $json.contact_email }}",
+          "org_type": "={{ $json.org_type }}",
+          "copies_needed": "={{ $json.copies_needed }}",
+          "quoted_price": "={{ $json.quoted_price }}",
+          "notes": "={{ $json.notes }}",
+          "status": "new"
+        }}
+      },
+      "id": "insert-lead", "name": "Insert itg_institutional_leads", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1020, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "email_templates",
+        "filterType": "string", "filterString": "sequence_name=eq.itg_institutional&email_number=eq.1"
+      },
+      "id": "get-tmpl", "name": "Get Quote Email Template", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1280, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST", "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "Bearer {{ $env.RESEND_API_KEY }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "from", "value": "Bishop Watkins <bishop@wigmail.co>" },
+          { "name": "to", "value": "={{ $('Calculate Quote').item.json.contact_email }}" },
+          { "name": "subject", "value": "={{ $json.subject }}" },
+          { "name": "html", "value": "={{ $json.body_html.replace('{{contact_name}}', $('Calculate Quote').item.json.contact_name).replace('{{org_name}}', $('Calculate Quote').item.json.org_name).replace('{{copies}}', $('Calculate Quote').item.json.copies_needed).replace('{{quoted_price}}', $('Calculate Quote').item.json.quoted_price) }}" }
+        ]}
+      },
+      "id": "send-quote", "name": "Send Quote Email", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1540, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "itg_institutional_leads",
+        "filterType": "string", "filterString": "contact_email=eq.{{ $('Calculate Quote').item.json.contact_email }}&status=eq.new",
+        "columns": { "mappingMode": "defineBelow", "value": { "quote_sent_at": "={{ $now }}", "status": "quoted" } }
+      },
+      "id": "mark-quoted", "name": "Mark Quoted", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1800, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "itg_institutional_leads",
+        "filterType": "string", "filterString": "status=eq.quoted&follow_up_1_sent_at=is.null&quote_sent_at=lt.{{ new Date(Date.now()-3*86400000).toISOString() }}"
+      },
+      "id": "get-followup", "name": "Pending Follow-up 1 (Day 3)", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [240, 560],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={ \"status\": \"ok\" }" },
+      "id": "respond", "name": "Respond 200", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1, "position": [2060, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: Institutional Inquiry": { "main": [[{ "node": "Normalize Payload", "type": "main", "index": 0 }]] },
+    "Normalize Payload":              { "main": [[{ "node": "Calculate Quote", "type": "main", "index": 0 }]] },
+    "Calculate Quote":                { "main": [[{ "node": "Insert itg_institutional_leads", "type": "main", "index": 0 }]] },
+    "Insert itg_institutional_leads": { "main": [[{ "node": "Get Quote Email Template", "type": "main", "index": 0 }]] },
+    "Get Quote Email Template":       { "main": [[{ "node": "Send Quote Email", "type": "main", "index": 0 }]] },
+    "Send Quote Email":               { "main": [[{ "node": "Mark Quoted", "type": "main", "index": 0 }]] },
+    "Mark Quoted":                    { "main": [[{ "node": "Respond 200", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "institutional" }, { "name": "wig" }]
+}

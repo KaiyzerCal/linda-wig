@@ -1,0 +1,66 @@
+{
+  "name": "20 — Social-to-Funnel Capture",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "social-engagement", "responseMode": "lastNode", "options": {} },
+      "id": "webhook", "name": "Webhook: Social Engagement", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $input.first().json.body || $input.first().json;\nreturn [{ json: {\n  platform: b.platform || 'unknown',\n  handle: b.handle || b.username || '',\n  email: b.email || '',\n  full_name: b.name || b.full_name || '',\n  engagement_type: b.type || 'comment',\n  content_id: b.content_id || b.post_id || '',\n  asset: b.asset || ''\n}}];"
+      },
+      "id": "normalize", "name": "Normalize Engagement", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "conditions": { "options": {}, "conditions": [{ "id": "1", "leftValue": "={{ $json.email }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty" } }] }
+      },
+      "id": "has-email", "name": "Has Email?", "type": "n8n-nodes-base.filter", "typeVersion": 2, "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "operation": "upsert", "schema": "public", "table": "wig_customers",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "email": "={{ $json.email }}",
+          "full_name": "={{ $json.full_name }}",
+          "source_brand": "wig",
+          "source_channel": "={{ $json.platform }}",
+          "source_asset": "={{ $json.asset }}",
+          "active_sequence": "={{ $json.asset === 'itg_individual' ? 'itg_email' : $json.asset === 'modern_lovefair' ? 'ml_email' : 'itg_email' }}",
+          "updated_at": "={{ $now }}"
+        }},
+        "additionalFields": { "onConflict": "email", "skipOnConflict": false }
+      },
+      "id": "upsert-customer", "name": "Upsert Customer", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1020, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "insert", "schema": "public", "table": "linda_outreach_prospects",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "platform": "={{ $('Normalize Engagement').item.json.platform }}",
+          "handle_or_url": "={{ $('Normalize Engagement').item.json.handle }}",
+          "full_name": "={{ $('Normalize Engagement').item.json.full_name }}",
+          "target_asset": "={{ $('Normalize Engagement').item.json.asset }}",
+          "outreach_type": "social_engagement",
+          "status": "queued"
+        }},
+        "additionalFields": { "onConflict": "handle_or_url", "skipOnConflict": true }
+      },
+      "id": "add-prospect", "name": "Add to Outreach Queue", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [760, 500],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={ \"status\": \"ok\" }" },
+      "id": "respond", "name": "Respond 200", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1, "position": [1280, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: Social Engagement": { "main": [[{ "node": "Normalize Engagement", "type": "main", "index": 0 }]] },
+    "Normalize Engagement":       { "main": [[{ "node": "Has Email?", "type": "main", "index": 0 }, { "node": "Add to Outreach Queue", "type": "main", "index": 0 }]] },
+    "Has Email?":                 { "main": [[{ "node": "Upsert Customer", "type": "main", "index": 0 }]] },
+    "Upsert Customer":            { "main": [[{ "node": "Respond 200", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "funnel" }, { "name": "social" }]
+}

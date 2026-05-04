@@ -1,0 +1,155 @@
+{
+  "name": "34 — Fred Approval → Bid Submission + Deposit",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "marine-fred-approved", "responseMode": "lastNode", "options": {} },
+      "id": "webhook", "name": "Webhook: Fred Approved", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $input.first().json.body || $input.first().json;\nreturn [{ json: {\n  lead_id: b.lead_id || '',\n  bid_amount: parseFloat(b.bid_amount || 0),\n  fred_notes: b.notes || ''\n}}];"
+      },
+      "id": "normalize", "name": "Normalize Approval", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "marine_qualified_leads",
+        "filterType": "string", "filterString": "id=eq.{{ $json.lead_id }}"
+      },
+      "id": "get-lead", "name": "Get Lead", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [760, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "marine_qualified_leads",
+        "filterType": "string", "filterString": "id=eq.{{ $('Normalize Approval').item.json.lead_id }}",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "fred_approved": true,
+          "fred_approved_at": "={{ $now }}",
+          "bid_amount": "={{ $('Normalize Approval').item.json.bid_amount }}",
+          "bid_sent_at": "={{ $now }}",
+          "status": "bid_sent"
+        }}
+      },
+      "id": "mark-approved", "name": "Mark Fred Approved", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1020, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST", "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "Bearer {{ $env.RESEND_API_KEY }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "from", "value": "Fred's Marine Construction <fred@fredsmarineconstruction.com>" },
+          { "name": "to", "value": "={{ $('Get Lead').item.json.email }}" },
+          { "name": "subject", "value": "Your Marine Construction Bid — Fred's Marine" },
+          { "name": "html", "value": "=<h2>Your Project Bid</h2><p>Dear {{ $('Get Lead').item.json.contact_name }},</p><p>Thank you for the opportunity to bid on your marine project at {{ $('Get Lead').item.json.property_address }}.</p><p><strong>Project Total: ${{ $('Normalize Approval').item.json.bid_amount.toLocaleString() }}</strong></p><p>To secure your project start date, a 30% deposit of <strong>${{ ($('Normalize Approval').item.json.bid_amount * 0.3).toFixed(2) }}</strong> is required.</p><p><a href='{{ $env.STRIPE_MARINE_DEPOSIT_LINK }}?client_reference_id={{ $('Normalize Approval').item.json.lead_id }}&amount={{ Math.round($('Normalize Approval').item.json.bid_amount * 0.3 * 100) }}'>Pay Deposit Now</a></p><p>Questions? Call us directly or reply to this email.</p><p>— Fred's Marine Construction</p>" }
+        ]}
+      },
+      "id": "send-bid", "name": "Send Bid to Client", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LINDA_URL }}/linda/zapier/webhook",
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "event", "value": "marine_bid_sent" },
+          { "name": "contact_name", "value": "={{ $('Get Lead').item.json.contact_name }}" },
+          { "name": "bid_amount", "value": "=${{ $('Normalize Approval').item.json.bid_amount }}" },
+          { "name": "fred_notes", "value": "={{ $('Normalize Approval').item.json.fred_notes }}" }
+        ]}
+      },
+      "id": "notify-calvin", "name": "Notify Calvin", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1540, 300]
+    },
+    {
+      "parameters": { "httpMethod": "POST", "path": "marine-deposit-received", "responseMode": "lastNode", "options": {} },
+      "id": "deposit-webhook", "name": "Webhook: Deposit Received (Stripe)", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 580]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $input.first().json.body || $input.first().json;\nconst meta = b.data?.object?.metadata || {};\nreturn [{ json: {\n  lead_id: meta.client_reference_id || b.lead_id || '',\n  deposit_amount: parseFloat((b.data?.object?.amount || 0) / 100)\n}}];"
+      },
+      "id": "normalize-deposit", "name": "Normalize Deposit", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [500, 580]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "marine_qualified_leads",
+        "filterType": "string", "filterString": "id=eq.{{ $json.lead_id }}"
+      },
+      "id": "get-lead-2", "name": "Get Lead for Deposit", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [760, 580],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "insert", "schema": "public", "table": "marine_projects",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "lead_id": "={{ $('Normalize Deposit').item.json.lead_id }}",
+          "client_name": "={{ $('Get Lead for Deposit').item.json.contact_name }}",
+          "market": "={{ $('Get Lead for Deposit').item.json.market }}",
+          "project_scope": "={{ $('Get Lead for Deposit').item.json.scope_notes }}",
+          "total_value": "={{ $('Get Lead for Deposit').item.json.bid_amount }}",
+          "deposit_paid": "={{ $('Normalize Deposit').item.json.deposit_amount }}",
+          "balance_due": "={{ ($('Get Lead for Deposit').item.json.bid_amount || 0) - $('Normalize Deposit').item.json.deposit_amount }}",
+          "start_date": "={{ $today }}",
+          "status": "active"
+        }}
+      },
+      "id": "create-project", "name": "Create Marine Project", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1020, 580],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "marine_qualified_leads",
+        "filterType": "string", "filterString": "id=eq.{{ $('Normalize Deposit').item.json.lead_id }}",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "deposit_received": true,
+          "deposit_amount": "={{ $('Normalize Deposit').item.json.deposit_amount }}",
+          "status": "active"
+        }}
+      },
+      "id": "update-lead-deposit", "name": "Mark Deposit Received", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1280, 580],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LINDA_URL }}/linda/zapier/webhook",
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "event", "value": "marine_project_started" },
+          { "name": "client_name", "value": "={{ $('Get Lead for Deposit').item.json.contact_name }}" },
+          { "name": "market", "value": "={{ $('Get Lead for Deposit').item.json.market }}" },
+          { "name": "deposit", "value": "=${{ $('Normalize Deposit').item.json.deposit_amount }}" },
+          { "name": "balance", "value": "=${{ (($('Get Lead for Deposit').item.json.bid_amount || 0) - $('Normalize Deposit').item.json.deposit_amount).toFixed(2) }}" }
+        ]}
+      },
+      "id": "notify-project-start", "name": "Notify Project Start", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1540, 580]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={ \"status\": \"ok\" }" },
+      "id": "respond-1", "name": "Respond 200 (Approval)", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1, "position": [1800, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={ \"status\": \"ok\" }" },
+      "id": "respond-2", "name": "Respond 200 (Deposit)", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1, "position": [1800, 580]
+    }
+  ],
+  "connections": {
+    "Webhook: Fred Approved":         { "main": [[{ "node": "Normalize Approval", "type": "main", "index": 0 }]] },
+    "Normalize Approval":             { "main": [[{ "node": "Get Lead", "type": "main", "index": 0 }]] },
+    "Get Lead":                       { "main": [[{ "node": "Mark Fred Approved", "type": "main", "index": 0 }]] },
+    "Mark Fred Approved":             { "main": [[{ "node": "Send Bid to Client", "type": "main", "index": 0 }]] },
+    "Send Bid to Client":             { "main": [[{ "node": "Notify Calvin", "type": "main", "index": 0 }]] },
+    "Notify Calvin":                  { "main": [[{ "node": "Respond 200 (Approval)", "type": "main", "index": 0 }]] },
+    "Webhook: Deposit Received (Stripe)": { "main": [[{ "node": "Normalize Deposit", "type": "main", "index": 0 }]] },
+    "Normalize Deposit":              { "main": [[{ "node": "Get Lead for Deposit", "type": "main", "index": 0 }]] },
+    "Get Lead for Deposit":           { "main": [[{ "node": "Create Marine Project", "type": "main", "index": 0 }]] },
+    "Create Marine Project":          { "main": [[{ "node": "Mark Deposit Received", "type": "main", "index": 0 }]] },
+    "Mark Deposit Received":          { "main": [[{ "node": "Notify Project Start", "type": "main", "index": 0 }]] },
+    "Notify Project Start":           { "main": [[{ "node": "Respond 200 (Deposit)", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "marine" }, { "name": "bids" }, { "name": "billing" }]
+}

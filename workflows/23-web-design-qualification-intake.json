@@ -1,0 +1,80 @@
+{
+  "name": "23 — Web Design Qualification Intake",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wp-qualify", "responseMode": "lastNode", "options": {} },
+      "id": "webhook", "name": "Webhook: Qualification Form", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $input.first().json.body || $input.first().json;\nreturn [{ json: {\n  business_name: b.business_name || '',\n  contact_name: b.contact_name || b.name || '',\n  phone: b.phone || '',\n  email: b.email || '',\n  business_type: b.business_type || '',\n  current_website: b.current_website || '',\n  project_goals: Array.isArray(b.project_goals) ? b.project_goals : [b.project_goals || ''],\n  timeline: b.timeline || '',\n  budget_range: b.budget_range || '',\n  best_call_time: b.best_call_time || ''\n}}];"
+      },
+      "id": "normalize", "name": "Normalize Form", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nlet score = 50;\nif (d.phone) score += 20;\nif (d.timeline && d.timeline.includes('month')) score += 15;\nif (d.budget_range && !d.budget_range.includes('unsure')) score += 15;\nconst nurture_track = score >= 80 ? 'hot' : score >= 60 ? 'standard' : 'cold';\nreturn [{ json: { ...d, lead_score: score, nurture_track } }];"
+      },
+      "id": "score-lead", "name": "Score Lead", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert", "schema": "public", "table": "wp_qualified_leads",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "business_name": "={{ $json.business_name }}",
+          "contact_name": "={{ $json.contact_name }}",
+          "phone": "={{ $json.phone }}",
+          "email": "={{ $json.email }}",
+          "business_type": "={{ $json.business_type }}",
+          "current_website": "={{ $json.current_website }}",
+          "project_goals": "={{ $json.project_goals }}",
+          "timeline": "={{ $json.timeline }}",
+          "budget_range": "={{ $json.budget_range }}",
+          "best_call_time": "={{ $json.best_call_time }}",
+          "lead_score": "={{ $json.lead_score }}",
+          "nurture_track": "={{ $json.nurture_track }}",
+          "status": "qualified"
+        }}
+      },
+      "id": "insert-lead", "name": "Insert wp_qualified_leads", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1020, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LINDA_URL }}/linda/zapier/webhook",
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "event", "value": "wp_lead_qualified" },
+          { "name": "business_name", "value": "={{ $json.business_name }}" },
+          { "name": "contact_name", "value": "={{ $json.contact_name }}" },
+          { "name": "lead_score", "value": "={{ $json.lead_score }}" },
+          { "name": "nurture_track", "value": "={{ $json.nurture_track }}" }
+        ]}
+      },
+      "id": "notify-linda", "name": "Notify Linda", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "wig_daily_metrics",
+        "filterType": "string", "filterString": "date=eq.{{ $today }}",
+        "columns": { "mappingMode": "defineBelow", "value": { "wp_qualified": 1 } }
+      },
+      "id": "update-metrics", "name": "Update Metrics", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1280, 480],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={ \"status\": \"ok\" }" },
+      "id": "respond", "name": "Respond 200", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1, "position": [1540, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: Qualification Form": { "main": [[{ "node": "Normalize Form", "type": "main", "index": 0 }]] },
+    "Normalize Form":              { "main": [[{ "node": "Score Lead", "type": "main", "index": 0 }]] },
+    "Score Lead":                  { "main": [[{ "node": "Insert wp_qualified_leads", "type": "main", "index": 0 }]] },
+    "Insert wp_qualified_leads":   { "main": [[{ "node": "Notify Linda", "type": "main", "index": 0 }, { "node": "Update Metrics", "type": "main", "index": 0 }]] },
+    "Notify Linda":                { "main": [[{ "node": "Respond 200", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "web-design" }, { "name": "qualification" }]
+}

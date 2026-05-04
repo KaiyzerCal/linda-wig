@@ -1,0 +1,71 @@
+{
+  "name": "18 — Social Content Generation",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 7 * * *" }] } },
+      "id": "cron", "name": "7:00am Daily", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ASSETS = [\n  { asset: 'modern_lovefair', brand: 'wig' },\n  { asset: 'itg_individual', brand: 'wig' },\n  { asset: 'bioneer', brand: 'bioneer' },\n  { asset: 'skyforge_bundle', brand: 'skyforge_ai' }\n];\nconst TOPICS = ['mindset', 'financial freedom', 'personal growth', 'AI tools', 'self-improvement', 'entrepreneurship'];\nconst asset = ASSETS[new Date().getDay() % ASSETS.length];\nconst topic = TOPICS[new Date().getDate() % TOPICS.length];\nreturn [{ json: { ...asset, topic, date: new Date().toISOString().slice(0,10) } }];"
+      },
+      "id": "pick-asset", "name": "Pick Today's Asset + Topic", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "system_prompts",
+        "filterType": "string", "filterString": "prompt_name=eq.generate_social_content"
+      },
+      "id": "get-prompt", "name": "Get Content Prompt", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [760, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+          { "name": "anthropic-version", "value": "2023-06-01" }
+        ]},
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "model", "value": "claude-sonnet-4-6" },
+          { "name": "max_tokens", "value": "800" },
+          { "name": "system", "value": "={{ $('Get Content Prompt').item.json.content }}" },
+          { "name": "messages", "value": "=[{\"role\": \"user\", \"content\": \"Asset: {{ $('Pick Today\\'s Asset + Topic').item.json.asset }}\\nBrand: {{ $('Pick Today\\'s Asset + Topic').item.json.brand }}\\nTopic: {{ $('Pick Today\\'s Asset + Topic').item.json.topic }}\\nDate: {{ $('Pick Today\\'s Asset + Topic').item.json.date }}\"}]" }
+        ]}
+      },
+      "id": "gen-content", "name": "Generate Content (Claude)", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1020, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $('Generate Content (Claude)').item.json.content?.[0]?.text || '';\nconst asset = $('Pick Today\\'s Asset + Topic').item.json.asset;\nconst brand = $('Pick Today\\'s Asset + Topic').item.json.brand;\nconst platforms = ['twitter', 'instagram', 'linkedin', 'tiktok'];\n\n// Parse out sections — Claude writes them with headers like (1) (2) (3) (4)\nconst sections = raw.split(/\\(\\d\\)/).filter(s => s.trim());\nconst results = [];\nfor (let i = 0; i < platforms.length; i++) {\n  results.push({ json: {\n    platform: platforms[i],\n    asset,\n    brand,\n    content_type: 'organic',\n    content_body: (sections[i] || raw).trim(),\n    status: 'pending'\n  }});\n}\nreturn results;"
+      },
+      "id": "parse-content", "name": "Parse Into 4 Posts", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1280, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert", "schema": "public", "table": "linda_content_queue",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "platform": "={{ $json.platform }}",
+          "asset": "={{ $json.asset }}",
+          "content_type": "={{ $json.content_type }}",
+          "content_body": "={{ $json.content_body }}",
+          "status": "pending"
+        }}
+      },
+      "id": "queue-content", "name": "Queue Content", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1540, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    }
+  ],
+  "connections": {
+    "7:00am Daily":                { "main": [[{ "node": "Pick Today's Asset + Topic", "type": "main", "index": 0 }]] },
+    "Pick Today's Asset + Topic":  { "main": [[{ "node": "Get Content Prompt", "type": "main", "index": 0 }]] },
+    "Get Content Prompt":          { "main": [[{ "node": "Generate Content (Claude)", "type": "main", "index": 0 }]] },
+    "Generate Content (Claude)":   { "main": [[{ "node": "Parse Into 4 Posts", "type": "main", "index": 0 }]] },
+    "Parse Into 4 Posts":          { "main": [[{ "node": "Queue Content", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "content" }, { "name": "social" }]
+}

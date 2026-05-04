@@ -1,0 +1,84 @@
+{
+  "name": "10 — Universal Cross-Sell Router",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "hours", "hoursInterval": 6 }] } },
+      "id": "cron", "name": "Every 6 Hours", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "wig_customers",
+        "filterType": "string",
+        "filterString": "cross_sell_eligible=eq.true&cross_sell_sent=eq.false&email_2_sent_at=not.is.null"
+      },
+      "id": "get-eligible", "name": "Get Cross-Sell Eligible", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all();\nconst results = [];\nfor (const row of rows) {\n  const c = row.json;\n  if (!c.email) continue;\n\n  // Determine best cross-sell offer\n  let offer = null;\n  let offer_field = null;\n  \n  if (c.source_brand === 'wig' && !c.skyforge_bundle_purchased && !c.skyforge_offered) {\n    offer = 'skyforge_bundle';\n    offer_field = 'skyforge_bundle_offered';\n  } else if (c.source_brand === 'skyforge_ai' && !c.architecture_set_purchased && !c.architecture_set_offered) {\n    offer = 'architecture_set';\n    offer_field = 'architecture_set_offered';\n  } else if (c.source_brand === 'bioneer' && !c.itg_purchased) {\n    offer = 'itg_individual';\n    offer_field = 'architecture_set_offered';\n  }\n  \n  if (offer) results.push({ json: { ...c, cross_sell_offer: offer, offer_field } });\n}\nreturn results.length ? results : [{ json: { skip: true } }];"
+      },
+      "id": "determine-offer", "name": "Determine Cross-Sell Offer", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "conditions": { "options": { "caseSensitive": true }, "conditions": [{ "id": "1", "leftValue": "={{ $json.skip }}", "rightValue": true, "operator": { "type": "boolean", "operation": "notEquals" } }] }
+      },
+      "id": "skip-check", "name": "Has Offer?", "type": "n8n-nodes-base.filter", "typeVersion": 2, "position": [1020, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "email_templates",
+        "filterType": "string", "filterString": "sequence_name=eq.cross_sell&brand=eq.{{ $json.cross_sell_offer }}"
+      },
+      "id": "get-tmpl", "name": "Get Cross-Sell Template", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1280, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST", "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "Bearer {{ $env.RESEND_API_KEY }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "from", "value": "Linda <linda@wigmail.co>" },
+          { "name": "to", "value": "={{ $('Determine Cross-Sell Offer').item.json.email }}" },
+          { "name": "subject", "value": "={{ $json.subject }}" },
+          { "name": "html", "value": "={{ $json.body_html.replace('{{full_name}}', $('Determine Cross-Sell Offer').item.json.full_name || 'Friend') }}" }
+        ]}
+      },
+      "id": "send-cs", "name": "Send Cross-Sell Email", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1540, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "wig_customers",
+        "filterType": "string", "filterString": "email=eq.{{ $('Determine Cross-Sell Offer').item.json.email }}",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "cross_sell_sent": true,
+          "updated_at": "={{ $now }}"
+        }}
+      },
+      "id": "mark-sent", "name": "Mark Cross-Sell Sent", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1800, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "wig_daily_metrics",
+        "filterType": "string", "filterString": "date=eq.{{ $today }}",
+        "columns": { "mappingMode": "defineBelow", "value": { "cross_sells_sent": 1 } }
+      },
+      "id": "update-metrics", "name": "Update Daily Metrics", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1800, 480],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    }
+  ],
+  "connections": {
+    "Every 6 Hours":           { "main": [[{ "node": "Get Cross-Sell Eligible", "type": "main", "index": 0 }]] },
+    "Get Cross-Sell Eligible": { "main": [[{ "node": "Determine Cross-Sell Offer", "type": "main", "index": 0 }]] },
+    "Determine Cross-Sell Offer": { "main": [[{ "node": "Has Offer?", "type": "main", "index": 0 }]] },
+    "Has Offer?":              { "main": [[{ "node": "Get Cross-Sell Template", "type": "main", "index": 0 }]] },
+    "Get Cross-Sell Template": { "main": [[{ "node": "Send Cross-Sell Email", "type": "main", "index": 0 }]] },
+    "Send Cross-Sell Email":   { "main": [[{ "node": "Mark Cross-Sell Sent", "type": "main", "index": 0 }, { "node": "Update Daily Metrics", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "cross-sell" }]
+}

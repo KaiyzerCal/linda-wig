@@ -1,0 +1,126 @@
+{
+  "name": "13 — Linda's Prospect Research (Books + SkyforgeAI)",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 9 * * *" }] } },
+      "id": "cron", "name": "9:00am Daily", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://oauth.reddit.com/r/personalfinance/new",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "Authorization", "value": "Bearer {{ $env.REDDIT_ACCESS_TOKEN }}" },
+          { "name": "User-Agent", "value": "LindaBot/1.0" }
+        ]},
+        "queryParameters": { "parameters": [{ "name": "limit", "value": "25" }] }
+      },
+      "id": "reddit-finance", "name": "Reddit: r/personalfinance", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [500, 200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://oauth.reddit.com/r/ChatGPT/new",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "Authorization", "value": "Bearer {{ $env.REDDIT_ACCESS_TOKEN }}" },
+          { "name": "User-Agent", "value": "LindaBot/1.0" }
+        ]},
+        "queryParameters": { "parameters": [{ "name": "limit", "value": "25" }] }
+      },
+      "id": "reddit-chatgpt", "name": "Reddit: r/ChatGPT", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [500, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://oauth.reddit.com/r/PrisonReform/new",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "Authorization", "value": "Bearer {{ $env.REDDIT_ACCESS_TOKEN }}" },
+          { "name": "User-Agent", "value": "LindaBot/1.0" }
+        ]},
+        "queryParameters": { "parameters": [{ "name": "limit", "value": "25" }] }
+      },
+      "id": "reddit-reform", "name": "Reddit: r/PrisonReform", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [500, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "const all = $input.all();\nconst posts = [];\nfor (const item of all) {\n  const children = item.json.data?.children || [];\n  for (const child of children) {\n    const p = child.data;\n    if (!p || !p.author || p.author === '[deleted]') continue;\n    if (p.selftext && p.selftext.length > 50) {\n      posts.push({ json: {\n        platform: 'reddit',\n        handle_or_url: `https://reddit.com${p.permalink}`,\n        full_name: p.author,\n        post_content: p.selftext.slice(0, 500),\n        subreddit: p.subreddit,\n        created_utc: p.created_utc\n      }});\n    }\n  }\n}\nreturn posts.slice(0, 30);"
+      },
+      "id": "extract-posts", "name": "Extract Posts", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [760, 400]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "system_prompts",
+        "filterType": "string", "filterString": "prompt_name=eq.score_reddit_prospect"
+      },
+      "id": "get-score-prompt", "name": "Get Scoring Prompt", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1020, 400],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+          { "name": "anthropic-version", "value": "2023-06-01" }
+        ]},
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "model", "value": "claude-haiku-4-5-20251001" },
+          { "name": "max_tokens", "value": "100" },
+          { "name": "system", "value": "={{ $('Get Scoring Prompt').item.json.content }}" },
+          { "name": "messages", "value": "=[{\"role\": \"user\", \"content\": {{ JSON.stringify($json.post_content) }}}]" }
+        ]}
+      },
+      "id": "score-post", "name": "Score Post (Claude Haiku)", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const scoreText = $('Score Post (Claude Haiku)').item.json.content?.[0]?.text || '{}';\nlet score_data;\ntry { score_data = JSON.parse(scoreText); } catch(e) { score_data = { score: 0 }; }\n\nconst post = $('Extract Posts').item.json;\nif (score_data.score >= 7) {\n  return [{ json: {\n    ...post,\n    target_asset: score_data.target_asset,\n    lead_score: score_data.score,\n    outreach_type: 'individual',\n    status: 'queued'\n  }}];\n}\nreturn [];"
+      },
+      "id": "filter-score", "name": "Filter Score >= 7", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1540, 400]
+    },
+    {
+      "parameters": {
+        "operation": "insert", "schema": "public", "table": "linda_outreach_prospects",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "platform": "={{ $json.platform }}",
+          "handle_or_url": "={{ $json.handle_or_url }}",
+          "full_name": "={{ $json.full_name }}",
+          "target_asset": "={{ $json.target_asset }}",
+          "outreach_type": "individual",
+          "post_content": "={{ $json.post_content }}",
+          "status": "queued"
+        }},
+        "additionalFields": { "onConflict": "handle_or_url", "skipOnConflict": true }
+      },
+      "id": "insert-prospect", "name": "Insert Prospect", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1800, 400],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "wig_daily_metrics",
+        "filterType": "string", "filterString": "date=eq.{{ $today }}",
+        "columns": { "mappingMode": "defineBelow", "value": { "prospects_identified": 1 } }
+      },
+      "id": "update-metrics", "name": "Update Metrics", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [2060, 400],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    }
+  ],
+  "connections": {
+    "9:00am Daily":             { "main": [[{ "node": "Reddit: r/personalfinance", "type": "main", "index": 0 }, { "node": "Reddit: r/ChatGPT", "type": "main", "index": 0 }, { "node": "Reddit: r/PrisonReform", "type": "main", "index": 0 }]] },
+    "Reddit: r/personalfinance":{ "main": [[{ "node": "Extract Posts", "type": "main", "index": 0 }]] },
+    "Reddit: r/ChatGPT":        { "main": [[{ "node": "Extract Posts", "type": "main", "index": 0 }]] },
+    "Reddit: r/PrisonReform":   { "main": [[{ "node": "Extract Posts", "type": "main", "index": 0 }]] },
+    "Extract Posts":            { "main": [[{ "node": "Get Scoring Prompt", "type": "main", "index": 0 }]] },
+    "Get Scoring Prompt":       { "main": [[{ "node": "Score Post (Claude Haiku)", "type": "main", "index": 0 }]] },
+    "Score Post (Claude Haiku)":{ "main": [[{ "node": "Filter Score >= 7", "type": "main", "index": 0 }]] },
+    "Filter Score >= 7":        { "main": [[{ "node": "Insert Prospect", "type": "main", "index": 0 }]] },
+    "Insert Prospect":          { "main": [[{ "node": "Update Metrics", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "outreach" }, { "name": "research" }]
+}

@@ -1,0 +1,64 @@
+{
+  "name": "27 — Web Design Pipeline Health",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 7 * * 1" }] } },
+      "id": "cron", "name": "Monday 7am", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "wp_leads",
+        "filterType": "string", "filterString": "status=eq.identified&created_at=gt.{{ new Date(Date.now()-30*86400000).toISOString() }}"
+      },
+      "id": "get-raw", "name": "Get Raw Leads (30d)", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 200],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "wp_qualified_leads",
+        "filterType": "string", "filterString": "created_at=gt.{{ new Date(Date.now()-30*86400000).toISOString() }}"
+      },
+      "id": "get-qualified", "name": "Get Qualified (30d)", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 400],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "wp_projects",
+        "filterType": "string", "filterString": "status=eq.active"
+      },
+      "id": "get-active", "name": "Get Active Projects", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 600],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $('Get Raw Leads (30d)').all().length;\nconst qualified = $('Get Qualified (30d)').all();\nconst active = $('Get Active Projects').all();\nconst proposals_out = qualified.filter(r => r.json.proposal_sent_at && !r.json.deposit_received).length;\nconst total_pipeline = active.reduce((sum, r) => sum + (r.json.balance_due || 0), 0);\n\nreturn [{ json: {\n  raw_leads_30d: raw,\n  qualified_30d: qualified.length,\n  active_projects: active.length,\n  proposals_outstanding: proposals_out,\n  pipeline_value: total_pipeline.toFixed(2)\n}}];"
+      },
+      "id": "build-report", "name": "Build Health Report", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [760, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LINDA_URL }}/linda/zapier/webhook",
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "event", "value": "wp_pipeline_health" },
+          { "name": "raw_leads", "value": "={{ $json.raw_leads_30d }}" },
+          { "name": "qualified", "value": "={{ $json.qualified_30d }}" },
+          { "name": "active_projects", "value": "={{ $json.active_projects }}" },
+          { "name": "proposals_out", "value": "={{ $json.proposals_outstanding }}" },
+          { "name": "pipeline_value", "value": "=${{ $json.pipeline_value }}" }
+        ]}
+      },
+      "id": "send-report", "name": "Send Weekly Report", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1020, 400]
+    }
+  ],
+  "connections": {
+    "Monday 7am":          { "main": [[{ "node": "Get Raw Leads (30d)", "type": "main", "index": 0 }, { "node": "Get Qualified (30d)", "type": "main", "index": 0 }, { "node": "Get Active Projects", "type": "main", "index": 0 }]] },
+    "Get Raw Leads (30d)": { "main": [[{ "node": "Build Health Report", "type": "main", "index": 0 }]] },
+    "Get Qualified (30d)": { "main": [[{ "node": "Build Health Report", "type": "main", "index": 0 }]] },
+    "Get Active Projects": { "main": [[{ "node": "Build Health Report", "type": "main", "index": 0 }]] },
+    "Build Health Report": { "main": [[{ "node": "Send Weekly Report", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "web-design" }, { "name": "monitoring" }]
+}

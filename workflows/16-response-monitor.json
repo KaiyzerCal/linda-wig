@@ -1,0 +1,70 @@
+{
+  "name": "16 — Response Monitor",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "hours", "hoursInterval": 2 }] } },
+      "id": "cron", "name": "Every 2 Hours", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "linda_outreach_prospects",
+        "filterType": "string",
+        "filterString": "status=eq.sent&response_received=eq.false&sent_at=gt.{{ new Date(Date.now()-48*3600000).toISOString() }}"
+      },
+      "id": "get-sent", "name": "Get Sent Outreach (48h)", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 200],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "itg_institutional_leads",
+        "filterType": "string", "filterString": "status=eq.quoted&follow_up_1_sent_at=is.null&quote_sent_at=lt.{{ new Date(Date.now()-3*86400000).toISOString() }}"
+      },
+      "id": "get-inst-overdue", "name": "Get Overdue Institutional Follow-ups", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 440],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const sent = $('Get Sent Outreach (48h)').all().map(r => r.json);\nconst overdue = $('Get Overdue Institutional Follow-ups').all().map(r => r.json);\n\nconst summary = {\n  active_outreach: sent.length,\n  institutional_overdue: overdue.length,\n  overdue_orgs: overdue.map(o => o.org_name)\n};\n\nreturn [{ json: summary }];"
+      },
+      "id": "summarize", "name": "Summarize Status", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [760, 320]
+    },
+    {
+      "parameters": {
+        "conditions": { "options": {}, "conditions": [{ "id": "1", "leftValue": "={{ $json.institutional_overdue }}", "rightValue": 0, "operator": { "type": "number", "operation": "gt" } }] }
+      },
+      "id": "has-overdue", "name": "Has Overdue?", "type": "n8n-nodes-base.filter", "typeVersion": 2, "position": [1020, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LINDA_URL }}/linda/zapier/webhook",
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "event", "value": "response_monitor_alert" },
+          { "name": "active_outreach", "value": "={{ $('Summarize Status').item.json.active_outreach }}" },
+          { "name": "institutional_overdue", "value": "={{ $('Summarize Status').item.json.institutional_overdue }}" },
+          { "name": "overdue_orgs", "value": "={{ $('Summarize Status').item.json.overdue_orgs.join(', ') }}" }
+        ]}
+      },
+      "id": "alert-linda", "name": "Alert: Overdue Follow-ups", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, 320]
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "wig_daily_metrics",
+        "filterType": "string", "filterString": "date=eq.{{ $today }}",
+        "columns": { "mappingMode": "defineBelow", "value": { "outreach_responses": "={{ $('Get Sent Outreach (48h)').all().filter(r => r.json.response_received).length }}" } }
+      },
+      "id": "update-metrics", "name": "Update Response Metrics", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1280, 520],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    }
+  ],
+  "connections": {
+    "Every 2 Hours":                      { "main": [[{ "node": "Get Sent Outreach (48h)", "type": "main", "index": 0 }, { "node": "Get Overdue Institutional Follow-ups", "type": "main", "index": 0 }]] },
+    "Get Sent Outreach (48h)":            { "main": [[{ "node": "Summarize Status", "type": "main", "index": 0 }]] },
+    "Get Overdue Institutional Follow-ups": { "main": [[{ "node": "Summarize Status", "type": "main", "index": 0 }]] },
+    "Summarize Status":                   { "main": [[{ "node": "Has Overdue?", "type": "main", "index": 0 }, { "node": "Update Response Metrics", "type": "main", "index": 0 }]] },
+    "Has Overdue?":                       { "main": [[{ "node": "Alert: Overdue Follow-ups", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "monitoring" }]
+}
