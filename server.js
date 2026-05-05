@@ -1027,12 +1027,10 @@ async function runPantheonSession(personas, triggerType, headline, sourceUrl, so
   return sid;
 }
 
-// Serve pantheon.html with env vars injected for Supabase client.
-// Falls back to a holding page when pantheon.html has not yet been deployed —
-// this keeps the Stripe cancel_url (/pantheon) functional at all times.
+// /pantheon — Pantheon paywall / subscribe landing page.
 app.get('/pantheon', (req, res) => {
-  const pantheonPath = path.join(__dirname, 'pantheon.html');
-  if (!fs.existsSync(pantheonPath)) {
+  const landingPath = path.join(__dirname, 'landing.html');
+  if (!fs.existsSync(landingPath)) {
     res.setHeader('Content-Type', 'text/html');
     return res.status(200).send(`<!DOCTYPE html>
 <html lang="en">
@@ -1052,10 +1050,19 @@ app.get('/pantheon', (req, res) => {
   <div>
     <h1>THE PANTHEON</h1>
     <p>The chamber is being prepared.<br>Access will open shortly.</p>
-    <a href="/">← RETURN TO INTERFACE</a>
+    <a href="/interface">← RETURN TO INTERFACE</a>
   </div>
 </body>
 </html>`);
+  }
+  res.sendFile(landingPath);
+});
+
+// /pantheon/access — serve the authenticated Pantheon app with env vars injected.
+app.get('/pantheon/access', (req, res) => {
+  const pantheonPath = path.join(__dirname, 'pantheon.html');
+  if (!fs.existsSync(pantheonPath)) {
+    return res.redirect('/pantheon');
   }
   try {
     let html = fs.readFileSync(pantheonPath, 'utf8');
@@ -1066,7 +1073,7 @@ app.get('/pantheon', (req, res) => {
     res.send(html);
   } catch (err) {
     console.error('[Pantheon] Failed to read pantheon.html:', err.message);
-    res.redirect('/');
+    res.redirect('/pantheon');
   }
 });
 
@@ -1405,20 +1412,14 @@ app.get('/sources', async (req, res) => {
   }
 });
 
-// Pantheon landing / paywall page.
-// Serves landing.html if present; falls back to /pantheon so the URL
-// remains valid regardless of deployment state.
-app.get('/landing', (req, res) => {
-  const landingPath = path.join(__dirname, 'landing.html');
-  if (fs.existsSync(landingPath)) {
-    return res.sendFile(landingPath);
-  }
-  res.redirect('/pantheon');
+// /interface — Linda & Locke chat UI.
+app.get('/interface', (req, res) => {
+  res.sendFile(path.join(__dirname, 'interface.html'));
 });
 
-// Root — Linda & Locke interface. Must be last so API routes match first.
+// Root — redirect to Pantheon landing page.
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'interface.html'));
+  res.redirect('/pantheon');
 });
 
 const PORT = process.env.PORT || 3000;
