@@ -634,8 +634,8 @@ app.post('/linda/chat', async (req, res) => {
     }
 
     res.json({ response: reply, principal_id, email_action: emailResult, social_action: socialResult, outreach_action: outreachResult, slack_action: slackResult });
-  } catch (err) {
-    console.error('Chat error:', err.message);
+ } catch (err) {
+    console.error('Chat error FULL:', err);
     res.status(500).json({ error: err.message });
   }
 });
