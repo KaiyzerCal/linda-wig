@@ -11,7 +11,7 @@ const LINDA_URL = process.env.LINDA_URL || 'https://linda-wig-production-bee5.up
 async function callClaudeWithFallback(client, message, userId, options = {}) {
   try {
     return await client.messages.create({
-      model: options.model || 'claude-sonnet-4-5-20251001',
+      model: options.model || 'claude-sonnet-4-5',
       max_tokens: options.max_tokens || 1024,
       messages: [{ role: 'user', content: message }],
       ...options,
