@@ -1,0 +1,218 @@
+{
+  "name": "19 — Social Posting: Direct to All Platforms",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 8 * * *" }] } },
+      "id": "cron", "name": "8:00am Daily", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "linda_content_queue",
+        "filterType": "string", "filterString": "status=eq.pending",
+        "additionalFields": { "limit": 4 }
+      },
+      "id": "get-pending", "name": "Get Pending Posts", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all();\nreturn rows.filter(r => r.json.content_body && r.json.platform).map(r => ({ json: r.json }));"
+      },
+      "id": "filter", "name": "Filter Valid", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "conditions": [
+            { "id": "twitter",   "leftValue": "={{ $json.platform }}", "rightValue": "twitter",   "operator": { "type": "string", "operation": "equals" } },
+            { "id": "instagram", "leftValue": "={{ $json.platform }}", "rightValue": "instagram", "operator": { "type": "string", "operation": "equals" } },
+            { "id": "linkedin",  "leftValue": "={{ $json.platform }}", "rightValue": "linkedin",  "operator": { "type": "string", "operation": "equals" } },
+            { "id": "tiktok",   "leftValue": "={{ $json.platform }}", "rightValue": "tiktok",   "operator": { "type": "string", "operation": "equals" } },
+            { "id": "facebook",  "leftValue": "={{ $json.platform }}", "rightValue": "facebook",  "operator": { "type": "string", "operation": "equals" } },
+            { "id": "youtube",   "leftValue": "={{ $json.platform }}", "rightValue": "youtube",   "operator": { "type": "string", "operation": "equals" } }
+          ]
+        }
+      },
+      "id": "route-platform", "name": "Route by Platform", "type": "n8n-nodes-base.switch", "typeVersion": 3, "position": [1020, 300]
+    },
+
+    {
+      "parameters": {
+        "text": "={{ $json.content_body.slice(0, 280) }}",
+        "additionalFields": {}
+      },
+      "id": "post-twitter", "name": "Post to X (Twitter)", "type": "n8n-nodes-base.twitter", "typeVersion": 2, "position": [1280, 100],
+      "credentials": { "twitterOAuth2Api": { "id": "twitter-creds", "name": "X / Twitter" } }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const body = $json.content_body || '';\nconst brandColors = { wig: '#1a1a1a', skyforge_ai: '#0a0a2e', bioneer: '#0d2818' };\nconst bg = brandColors[$json.brand] || '#111111';\nconst lines = body.slice(0, 300).replace(/\"/g, '&quot;');\nreturn [{ json: { ...$json, card_html: `<div style='background:${bg};color:#f0ede6;font-family:Georgia,serif;padding:60px;width:1080px;height:1080px;display:flex;align-items:center;justify-content:center;box-sizing:border-box'><p style='font-size:36px;line-height:1.5;text-align:center;max-width:900px'>${lines}</p></div>` } }];"
+      },
+      "id": "build-ig-card", "name": "Build Instagram Card HTML", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1280, 260]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://hcti.io/v1/image",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "bodyParameters": { "parameters": [{ "name": "html", "value": "={{ $json.card_html }}" }] }
+      },
+      "id": "gen-ig-image", "name": "Generate Image (HCTI)", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1540, 260],
+      "credentials": { "httpBasicAuth": { "id": "hcti-creds", "name": "HCTI (htmlcsstoimage)" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $env.INSTAGRAM_ACCOUNT_ID }}/media",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "Bearer {{ $env.INSTAGRAM_ACCESS_TOKEN }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "image_url", "value": "={{ $('Generate Image (HCTI)').item.json.url }}" },
+          { "name": "caption", "value": "={{ $('Build Instagram Card HTML').item.json.content_body.slice(0, 2200) }}" }
+        ]}
+      },
+      "id": "ig-create-container", "name": "Instagram: Create Media Container", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1800, 260]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $env.INSTAGRAM_ACCOUNT_ID }}/media_publish",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "Bearer {{ $env.INSTAGRAM_ACCESS_TOKEN }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "creation_id", "value": "={{ $json.id }}" }
+        ]}
+      },
+      "id": "ig-publish", "name": "Instagram: Publish", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [2060, 260]
+    },
+
+    {
+      "parameters": {
+        "person": "urn:li:person:{{ $env.LINKEDIN_PERSON_URN }}",
+        "text": "={{ $json.content_body.slice(0, 3000) }}",
+        "visibility": "PUBLIC",
+        "additionalFields": {}
+      },
+      "id": "post-linkedin", "name": "Post to LinkedIn", "type": "n8n-nodes-base.linkedIn", "typeVersion": 1, "position": [1280, 420],
+      "credentials": { "linkedInOAuth2Api": { "id": "linkedin-creds", "name": "LinkedIn" } }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// TikTok Content Posting API — requires video URL\n// Text-only posts are not supported by TikTok's API.\n// This node expects $json.video_url to be set upstream (e.g. from a video generation step).\n// If no video URL is available, it logs and skips.\nconst videoUrl = $json.video_url || null;\nif (!videoUrl) {\n  console.log('[TikTok] Skipped — no video_url on queue item id:', $json.id);\n  return [{ json: { ...$json, tiktok_skipped: true, reason: 'no_video_url' } }];\n}\nreturn [{ json: { ...$json, tiktok_video_url: videoUrl } }];"
+      },
+      "id": "tiktok-check", "name": "TikTok: Check for Video URL", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1280, 580]
+    },
+    {
+      "parameters": {
+        "conditions": { "options": {}, "conditions": [{ "id": "1", "leftValue": "={{ $json.tiktok_skipped }}", "rightValue": true, "operator": { "type": "boolean", "operation": "notEquals" } }] }
+      },
+      "id": "tiktok-has-video", "name": "Has Video?", "type": "n8n-nodes-base.filter", "typeVersion": 2, "position": [1540, 580]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.tiktokapis.com/v2/post/publish/video/init/",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "Bearer {{ $env.TIKTOK_ACCESS_TOKEN }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "post_info", "value": "={{ JSON.stringify({ title: $('TikTok: Check for Video URL').item.json.content_body.slice(0, 150), privacy_level: 'PUBLIC_TO_EVERYONE', disable_duet: false, disable_comment: false, disable_stitch: false }) }}" },
+          { "name": "source_info", "value": "={{ JSON.stringify({ source: 'PULL_FROM_URL', video_url: $json.tiktok_video_url }) }}" }
+        ]}
+      },
+      "id": "post-tiktok", "name": "Post to TikTok", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1800, 580]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $env.FACEBOOK_PAGE_ID }}/feed",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "Bearer {{ $env.FACEBOOK_PAGE_ACCESS_TOKEN }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "message", "value": "={{ $json.content_body.slice(0, 63206) }}" }
+        ]}
+      },
+      "id": "post-facebook", "name": "Post to Facebook Page", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, 740]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// YouTube requires a video file — text-only posts are not supported.\n// Expects $json.video_url on the queue item (e.g. from a video generation step).\n// The content_body is used as the video description + title.\nconst videoUrl = $json.video_url || null;\nif (!videoUrl) {\n  console.log('[YouTube] Skipped — no video_url on queue item id:', $json.id);\n  return [{ json: { ...$json, youtube_skipped: true, reason: 'no_video_url' } }];\n}\n// Parse title from first line of content, rest is description\nconst lines = ($json.content_body || '').split('\\n');\nconst title = lines[0].slice(0, 100);\nconst description = lines.slice(1).join('\\n').slice(0, 5000) || $json.content_body.slice(0, 5000);\nreturn [{ json: { ...$json, yt_title: title, yt_description: description, yt_video_url: videoUrl } }];"
+      },
+      "id": "youtube-check", "name": "YouTube: Check for Video URL", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1280, 900]
+    },
+    {
+      "parameters": {
+        "conditions": { "options": {}, "conditions": [{ "id": "1", "leftValue": "={{ $json.youtube_skipped }}", "rightValue": true, "operator": { "type": "boolean", "operation": "notEquals" } }] }
+      },
+      "id": "youtube-has-video", "name": "YouTube: Has Video?", "type": "n8n-nodes-base.filter", "typeVersion": 2, "position": [1540, 900]
+    },
+    {
+      "parameters": {
+        "title": "={{ $json.yt_title }}",
+        "categoryId": "22",
+        "description": "={{ $json.yt_description }}",
+        "privacyStatus": "public",
+        "url": "={{ $json.yt_video_url }}"
+      },
+      "id": "post-youtube", "name": "Upload to YouTube", "type": "n8n-nodes-base.youTube", "typeVersion": 1, "position": [1800, 900],
+      "credentials": { "youTubeOAuth2Api": { "id": "youtube-creds", "name": "YouTube" } }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Collect results from all platform branches and return a unified status\nconst queue_id = $input.first()?.json?.id || null;\nconst platform = $input.first()?.json?.platform || 'unknown';\nreturn [{ json: { queue_id, platform, posted_at: new Date().toISOString() } }];"
+      },
+      "id": "collect-result", "name": "Collect Result", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [2320, 340]
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "linda_content_queue",
+        "filterType": "string", "filterString": "id=eq.{{ $json.queue_id }}",
+        "columns": { "mappingMode": "defineBelow", "value": { "status": "posted", "posted_at": "={{ $json.posted_at }}" } }
+      },
+      "id": "mark-posted", "name": "Mark Posted in Supabase", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [2580, 340],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    }
+  ],
+  "connections": {
+    "8:00am Daily":                      { "main": [[{ "node": "Get Pending Posts", "type": "main", "index": 0 }]] },
+    "Get Pending Posts":                  { "main": [[{ "node": "Filter Valid", "type": "main", "index": 0 }]] },
+    "Filter Valid":                       { "main": [[{ "node": "Route by Platform", "type": "main", "index": 0 }]] },
+    "Route by Platform": {
+      "main": [
+        [{ "node": "Post to X (Twitter)", "type": "main", "index": 0 }],
+        [{ "node": "Build Instagram Card HTML", "type": "main", "index": 0 }],
+        [{ "node": "Post to LinkedIn", "type": "main", "index": 0 }],
+        [{ "node": "TikTok: Check for Video URL", "type": "main", "index": 0 }],
+        [{ "node": "Post to Facebook Page", "type": "main", "index": 0 }],
+        [{ "node": "YouTube: Check for Video URL", "type": "main", "index": 0 }]
+      ]
+    },
+    "Post to X (Twitter)":               { "main": [[{ "node": "Collect Result", "type": "main", "index": 0 }]] },
+    "Build Instagram Card HTML":          { "main": [[{ "node": "Generate Image (HCTI)", "type": "main", "index": 0 }]] },
+    "Generate Image (HCTI)":             { "main": [[{ "node": "Instagram: Create Media Container", "type": "main", "index": 0 }]] },
+    "Instagram: Create Media Container": { "main": [[{ "node": "Instagram: Publish", "type": "main", "index": 0 }]] },
+    "Instagram: Publish":                { "main": [[{ "node": "Collect Result", "type": "main", "index": 0 }]] },
+    "Post to LinkedIn":                  { "main": [[{ "node": "Collect Result", "type": "main", "index": 0 }]] },
+    "TikTok: Check for Video URL":       { "main": [[{ "node": "TikTok: Has Video?", "type": "main", "index": 0 }]] },
+    "Has Video?":                        { "main": [[{ "node": "Post to TikTok", "type": "main", "index": 0 }]] },
+    "Post to TikTok":                    { "main": [[{ "node": "Collect Result", "type": "main", "index": 0 }]] },
+    "Post to Facebook Page":             { "main": [[{ "node": "Collect Result", "type": "main", "index": 0 }]] },
+    "YouTube: Check for Video URL":      { "main": [[{ "node": "YouTube: Has Video?", "type": "main", "index": 0 }]] },
+    "YouTube: Has Video?":               { "main": [[{ "node": "Upload to YouTube", "type": "main", "index": 0 }]] },
+    "Upload to YouTube":                 { "main": [[{ "node": "Collect Result", "type": "main", "index": 0 }]] },
+    "Collect Result":                    { "main": [[{ "node": "Mark Posted in Supabase", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "social" }, { "name": "posting" }]
+}

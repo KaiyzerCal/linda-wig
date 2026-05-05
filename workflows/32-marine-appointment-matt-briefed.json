@@ -1,0 +1,79 @@
+{
+  "name": "32 — Marine Appointment → Matt Briefed",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "marine-appointment", "responseMode": "lastNode", "options": {} },
+      "id": "webhook", "name": "Webhook: Appointment Booked", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $input.first().json.body || $input.first().json;\nreturn [{ json: {\n  lead_id: b.lead_id || '',\n  contact_name: b.contact_name || b.name || '',\n  phone: b.phone || '',\n  property_address: b.property_address || b.address || '',\n  appointment_date: b.appointment_date || b.scheduled_at || '',\n  project_type: b.project_type || '',\n  scope_notes: b.scope_notes || b.notes || ''\n}}];"
+      },
+      "id": "normalize", "name": "Normalize Appointment", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "marine_qualified_leads",
+        "filterType": "string", "filterString": "id=eq.{{ $json.lead_id }}",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "appointment_booked": true,
+          "appointment_date": "={{ $json.appointment_date }}",
+          "status": "appointment_scheduled"
+        }}
+      },
+      "id": "update-lead", "name": "Mark Appointment Booked", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [760, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST", "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "Bearer {{ $env.RESEND_API_KEY }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "from", "value": "Linda <linda@fredsmarineconstruction.com>" },
+          { "name": "to", "value": "={{ $env.MATT_EMAIL }}" },
+          { "name": "subject", "value": "Site Visit Scheduled — {{ $('Normalize Appointment').item.json.contact_name }}" },
+          { "name": "html", "value": "=<h2>Site Visit Brief</h2><p><strong>Contact:</strong> {{ $('Normalize Appointment').item.json.contact_name }}<br><strong>Phone:</strong> {{ $('Normalize Appointment').item.json.phone }}<br><strong>Property:</strong> {{ $('Normalize Appointment').item.json.property_address }}<br><strong>Date/Time:</strong> {{ $('Normalize Appointment').item.json.appointment_date }}<br><strong>Project Type:</strong> {{ $('Normalize Appointment').item.json.project_type }}<br><strong>Notes:</strong> {{ $('Normalize Appointment').item.json.scope_notes }}</p><p>Confirm when you've reviewed. Fred gets this too.</p>" }
+        ]}
+      },
+      "id": "brief-matt", "name": "Brief Matt via Email", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1020, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LINDA_URL }}/linda/zapier/webhook",
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "event", "value": "marine_appointment_booked" },
+          { "name": "contact_name", "value": "={{ $('Normalize Appointment').item.json.contact_name }}" },
+          { "name": "appointment_date", "value": "={{ $('Normalize Appointment').item.json.appointment_date }}" },
+          { "name": "property", "value": "={{ $('Normalize Appointment').item.json.property_address }}" }
+        ]}
+      },
+      "id": "notify-calvin", "name": "Notify Calvin", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "wig_daily_metrics",
+        "filterType": "string", "filterString": "date=eq.{{ $today }}",
+        "columns": { "mappingMode": "defineBelow", "value": { "marine_appointments": 1 } }
+      },
+      "id": "update-metrics", "name": "Update Metrics", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1280, 480],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={ \"status\": \"ok\" }" },
+      "id": "respond", "name": "Respond 200", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1, "position": [1540, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: Appointment Booked": { "main": [[{ "node": "Normalize Appointment", "type": "main", "index": 0 }]] },
+    "Normalize Appointment":       { "main": [[{ "node": "Mark Appointment Booked", "type": "main", "index": 0 }]] },
+    "Mark Appointment Booked":     { "main": [[{ "node": "Brief Matt via Email", "type": "main", "index": 0 }]] },
+    "Brief Matt via Email":        { "main": [[{ "node": "Notify Calvin", "type": "main", "index": 0 }, { "node": "Update Metrics", "type": "main", "index": 0 }]] },
+    "Notify Calvin":               { "main": [[{ "node": "Respond 200", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "marine" }, { "name": "appointments" }]
+}

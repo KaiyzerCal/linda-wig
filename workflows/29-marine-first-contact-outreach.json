@@ -1,0 +1,88 @@
+{
+  "name": "29 — Marine First Contact Outreach",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 9 * * 2,5" }] } },
+      "id": "cron", "name": "Tue/Fri 9am", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "marine_leads",
+        "filterType": "string", "filterString": "status=eq.identified&outreach_sent=eq.false&email=not.is.null",
+        "additionalFields": { "limit": 15 }
+      },
+      "id": "get-leads", "name": "Get Uncontacted Marine Leads", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "system_prompts",
+        "filterType": "string", "filterString": "prompt_name=eq.write_marine_first_contact"
+      },
+      "id": "get-prompt", "name": "Get Outreach Prompt", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [760, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+          { "name": "anthropic-version", "value": "2023-06-01" }
+        ]},
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "model", "value": "claude-sonnet-4-6" },
+          { "name": "max_tokens", "value": "400" },
+          { "name": "system", "value": "={{ $('Get Outreach Prompt').item.json.content }}" },
+          { "name": "messages", "value": "=[{\"role\": \"user\", \"content\": \"Business/Property: {{ $('Get Uncontacted Marine Leads').item.json.business_name }}\\nLead type: {{ $('Get Uncontacted Marine Leads').item.json.lead_type }}\\nMarket: {{ $('Get Uncontacted Marine Leads').item.json.market }}\\nAddress: {{ $('Get Uncontacted Marine Leads').item.json.address }}\"}]" }
+        ]}
+      },
+      "id": "write-email", "name": "Write First Contact Email", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1020, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST", "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "Bearer {{ $env.RESEND_API_KEY }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "from", "value": "Linda — Fred's Marine <linda@fredsmarineconstruction.com>" },
+          { "name": "to", "value": "={{ $('Get Uncontacted Marine Leads').item.json.email }}" },
+          { "name": "subject", "value": "Marine Construction — {{ $('Get Uncontacted Marine Leads').item.json.market === 'stuart' ? 'Stuart' : 'West Palm Beach' }} Project Inquiry" },
+          { "name": "html", "value": "={{ $('Write First Contact Email').item.json.content?.[0]?.text || '' }}" }
+        ]}
+      },
+      "id": "send-email", "name": "Send Email", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "marine_leads",
+        "filterType": "string", "filterString": "id=eq.{{ $('Get Uncontacted Marine Leads').item.json.id }}",
+        "columns": { "mappingMode": "defineBelow", "value": { "outreach_sent": true, "outreach_sent_at": "={{ $now }}", "status": "contacted" } }
+      },
+      "id": "mark-sent", "name": "Mark Contacted", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1540, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "wig_daily_metrics",
+        "filterType": "string", "filterString": "date=eq.{{ $today }}",
+        "columns": { "mappingMode": "defineBelow", "value": { "marine_leads_found": 1 } }
+      },
+      "id": "update-metrics", "name": "Update Metrics", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1800, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    }
+  ],
+  "connections": {
+    "Tue/Fri 9am":                   { "main": [[{ "node": "Get Uncontacted Marine Leads", "type": "main", "index": 0 }]] },
+    "Get Uncontacted Marine Leads":  { "main": [[{ "node": "Get Outreach Prompt", "type": "main", "index": 0 }]] },
+    "Get Outreach Prompt":           { "main": [[{ "node": "Write First Contact Email", "type": "main", "index": 0 }]] },
+    "Write First Contact Email":     { "main": [[{ "node": "Send Email", "type": "main", "index": 0 }]] },
+    "Send Email":                    { "main": [[{ "node": "Mark Contacted", "type": "main", "index": 0 }]] },
+    "Mark Contacted":                { "main": [[{ "node": "Update Metrics", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "marine" }, { "name": "outreach" }]
+}

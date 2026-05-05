@@ -1,0 +1,74 @@
+{
+  "name": "17 — Kill Condition Monitor",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "hours", "hoursInterval": 48 }] } },
+      "id": "cron", "name": "Every 48 Hours", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "kill_conditions"
+      },
+      "id": "get-conditions", "name": "Get All Kill Conditions", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "wig_daily_metrics",
+        "filterType": "string", "filterString": "date=gt.{{ new Date(Date.now()-7*86400000).toISOString().slice(0,10) }}"
+      },
+      "id": "get-metrics", "name": "Get 7-Day Metrics", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 500],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const conditions = $('Get All Kill Conditions').all().map(r => r.json);\nconst metrics = $('Get 7-Day Metrics').all().map(r => r.json);\n\nconst totals = metrics.reduce((acc, m) => ({\n  outreach_sent: acc.outreach_sent + (m.outreach_sent || 0),\n  outreach_responses: acc.outreach_responses + (m.outreach_responses || 0),\n  cross_sells_sent: acc.cross_sells_sent + (m.cross_sells_sent || 0),\n  cross_sells_converted: acc.cross_sells_converted + (m.cross_sells_converted || 0)\n}), { outreach_sent: 0, outreach_responses: 0, cross_sells_sent: 0, cross_sells_converted: 0 });\n\nconst rates = {\n  book_outreach: totals.outreach_sent > 0 ? (totals.outreach_responses / totals.outreach_sent * 100).toFixed(1) : 100,\n  cross_sell_router: totals.cross_sells_sent > 0 ? (totals.cross_sells_converted / totals.cross_sells_sent * 100).toFixed(1) : 100\n};\n\nconst alerts = [];\nfor (const c of conditions) {\n  const rate = parseFloat(rates[c.workflow_name] || 100);\n  if (c.threshold_min && rate < parseFloat(c.threshold_min)) {\n    alerts.push({ ...c, current_value: rate, status: 'warning' });\n  }\n}\n\nreturn alerts.length ? alerts.map(a => ({ json: a })) : [{ json: { skip: true } }];"
+      },
+      "id": "evaluate", "name": "Evaluate Conditions", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [760, 400]
+    },
+    {
+      "parameters": {
+        "conditions": { "options": {}, "conditions": [{ "id": "1", "leftValue": "={{ $json.skip }}", "rightValue": true, "operator": { "type": "boolean", "operation": "notEquals" } }] }
+      },
+      "id": "has-alerts", "name": "Has Alerts?", "type": "n8n-nodes-base.filter", "typeVersion": 2, "position": [1020, 400]
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "kill_conditions",
+        "filterType": "string", "filterString": "workflow_name=eq.{{ $json.workflow_name }}",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "current_value": "={{ $json.current_value }}",
+          "status": "warning",
+          "last_evaluated_at": "={{ $now }}"
+        }}
+      },
+      "id": "update-condition", "name": "Update Condition Status", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1280, 400],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LINDA_URL }}/linda/zapier/webhook",
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "event", "value": "kill_condition_alert" },
+          { "name": "workflow", "value": "={{ $json.workflow_name }}" },
+          { "name": "metric", "value": "={{ $json.metric_name }}" },
+          { "name": "current", "value": "={{ $json.current_value }}%" },
+          { "name": "threshold", "value": "={{ $json.threshold_min }}%" }
+        ]}
+      },
+      "id": "alert-calvin", "name": "Alert Calvin via Linda", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1540, 400]
+    }
+  ],
+  "connections": {
+    "Every 48 Hours":           { "main": [[{ "node": "Get All Kill Conditions", "type": "main", "index": 0 }, { "node": "Get 7-Day Metrics", "type": "main", "index": 0 }]] },
+    "Get All Kill Conditions":  { "main": [[{ "node": "Evaluate Conditions", "type": "main", "index": 0 }]] },
+    "Get 7-Day Metrics":        { "main": [[{ "node": "Evaluate Conditions", "type": "main", "index": 0 }]] },
+    "Evaluate Conditions":      { "main": [[{ "node": "Has Alerts?", "type": "main", "index": 0 }]] },
+    "Has Alerts?":              { "main": [[{ "node": "Update Condition Status", "type": "main", "index": 0 }]] },
+    "Update Condition Status":  { "main": [[{ "node": "Alert Calvin via Linda", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "monitoring" }, { "name": "kill-conditions" }]
+}

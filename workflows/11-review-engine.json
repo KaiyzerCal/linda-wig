@@ -1,0 +1,75 @@
+{
+  "name": "11 — Review Engine",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "hours", "hoursInterval": 24 }] } },
+      "id": "cron", "name": "Daily", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "wig_customers",
+        "filterType": "string",
+        "filterString": "review_requested=eq.false&email_3_sent_at=not.is.null&email_3_sent_at=lt.{{ new Date(Date.now()-7*86400000).toISOString() }}"
+      },
+      "id": "get-review-eligible", "name": "Get Review-Eligible Customers", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all();\nreturn rows.filter(r => r.json.email).map(r => ({ json: r.json }));"
+      },
+      "id": "filter", "name": "Filter Valid", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "email_templates",
+        "filterType": "string", "filterString": "sequence_name=eq.review_request&email_number=eq.1"
+      },
+      "id": "get-tmpl", "name": "Get Review Template", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1020, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST", "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "Bearer {{ $env.RESEND_API_KEY }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "from", "value": "Bishop Watkins <bishop@wigmail.co>" },
+          { "name": "to", "value": "={{ $('Filter Valid').item.json.email }}" },
+          { "name": "subject", "value": "={{ $('Get Review Template').item.json.subject }}" },
+          { "name": "html", "value": "={{ $('Get Review Template').item.json.body_html.replace('{{full_name}}', $('Filter Valid').item.json.full_name || 'Friend').replace('{{product}}', $('Filter Valid').item.json.source_asset || 'your purchase') }}" }
+        ]}
+      },
+      "id": "send-review", "name": "Send Review Request", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "wig_customers",
+        "filterType": "string", "filterString": "email=eq.{{ $('Filter Valid').item.json.email }}",
+        "columns": { "mappingMode": "defineBelow", "value": { "review_requested": true, "updated_at": "={{ $now }}" } }
+      },
+      "id": "mark-requested", "name": "Mark Review Requested", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1540, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "wig_daily_metrics",
+        "filterType": "string", "filterString": "date=eq.{{ $today }}",
+        "columns": { "mappingMode": "defineBelow", "value": { "reviews_requested": 1 } }
+      },
+      "id": "update-metrics", "name": "Update Daily Metrics", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1800, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    }
+  ],
+  "connections": {
+    "Daily":                         { "main": [[{ "node": "Get Review-Eligible Customers", "type": "main", "index": 0 }]] },
+    "Get Review-Eligible Customers": { "main": [[{ "node": "Filter Valid", "type": "main", "index": 0 }]] },
+    "Filter Valid":                  { "main": [[{ "node": "Get Review Template", "type": "main", "index": 0 }]] },
+    "Get Review Template":           { "main": [[{ "node": "Send Review Request", "type": "main", "index": 0 }]] },
+    "Send Review Request":           { "main": [[{ "node": "Mark Review Requested", "type": "main", "index": 0 }]] },
+    "Mark Review Requested":         { "main": [[{ "node": "Update Daily Metrics", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "reviews" }]
+}

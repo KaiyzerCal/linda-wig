@@ -1,0 +1,107 @@
+{
+  "name": "08 — BIONEER Intake + Cross-Sell Back",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "hours", "hoursInterval": 6 }] } },
+      "id": "cron", "name": "Every 6 Hours", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "wig_customers",
+        "filterType": "string", "filterString": "active_sequence=eq.bioneer_email&email_1_sent_at=is.null"
+      },
+      "id": "get-e1", "name": "Pending Email 1 (Welcome)", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 200],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "wig_customers",
+        "filterType": "string",
+        "filterString": "active_sequence=eq.bioneer_email&email_1_sent_at=not.is.null&email_2_sent_at=is.null&architecture_set_purchased=eq.false&email_1_sent_at=lt.{{ new Date(Date.now()-3*86400000).toISOString() }}"
+      },
+      "id": "get-e2", "name": "Pending Cross-Sell (Day 3)", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 400],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "email_templates",
+        "filterType": "string", "filterString": "sequence_name=eq.bioneer_email&email_number=eq.1"
+      },
+      "id": "tmpl-1", "name": "Template E1", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [760, 200],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST", "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "Bearer {{ $env.RESEND_API_KEY }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "from", "value": "BIONEER <hello@bioneer.co>" },
+          { "name": "to", "value": "={{ $('Pending Email 1 (Welcome)').item.json.email }}" },
+          { "name": "subject", "value": "={{ $('Template E1').item.json.subject }}" },
+          { "name": "html", "value": "={{ $('Template E1').item.json.body_html.replace('{{full_name}}', $('Pending Email 1 (Welcome)').item.json.full_name || 'Friend') }}" }
+        ]}
+      },
+      "id": "send-e1", "name": "Send Welcome Email", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1020, 200]
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "wig_customers",
+        "filterType": "string", "filterString": "email=eq.{{ $('Pending Email 1 (Welcome)').item.json.email }}",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "email_1_sent_at": "={{ $now }}",
+          "bioneer_purchased": true,
+          "funnel_stage": "EMAIL_2",
+          "cross_sell_eligible": true,
+          "updated_at": "={{ $now }}"
+        }}
+      },
+      "id": "mark-e1", "name": "Mark Welcome Sent", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1280, 200],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "email_templates",
+        "filterType": "string", "filterString": "sequence_name=eq.bioneer_email&email_number=eq.2"
+      },
+      "id": "tmpl-2", "name": "Template E2 Cross-Sell", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [760, 400],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST", "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "Bearer {{ $env.RESEND_API_KEY }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "from", "value": "BIONEER <hello@bioneer.co>" },
+          { "name": "to", "value": "={{ $('Pending Cross-Sell (Day 3)').item.json.email }}" },
+          { "name": "subject", "value": "={{ $('Template E2 Cross-Sell').item.json.subject }}" },
+          { "name": "html", "value": "={{ $('Template E2 Cross-Sell').item.json.body_html.replace('{{full_name}}', $('Pending Cross-Sell (Day 3)').item.json.full_name || 'Friend') }}" }
+        ]}
+      },
+      "id": "send-e2", "name": "Send Cross-Sell Email", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1020, 400]
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "wig_customers",
+        "filterType": "string", "filterString": "email=eq.{{ $('Pending Cross-Sell (Day 3)').item.json.email }}",
+        "columns": { "mappingMode": "defineBelow", "value": { "email_2_sent_at": "={{ $now }}", "architecture_set_offered": true, "cross_sell_sent": true, "updated_at": "={{ $now }}" } }
+      },
+      "id": "mark-e2", "name": "Mark Cross-Sell Sent", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1280, 400],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    }
+  ],
+  "connections": {
+    "Every 6 Hours":               { "main": [[{ "node": "Pending Email 1 (Welcome)", "type": "main", "index": 0 }, { "node": "Pending Cross-Sell (Day 3)", "type": "main", "index": 0 }]] },
+    "Pending Email 1 (Welcome)":   { "main": [[{ "node": "Template E1", "type": "main", "index": 0 }]] },
+    "Template E1":                 { "main": [[{ "node": "Send Welcome Email", "type": "main", "index": 0 }]] },
+    "Send Welcome Email":          { "main": [[{ "node": "Mark Welcome Sent", "type": "main", "index": 0 }]] },
+    "Pending Cross-Sell (Day 3)":  { "main": [[{ "node": "Template E2 Cross-Sell", "type": "main", "index": 0 }]] },
+    "Template E2 Cross-Sell":      { "main": [[{ "node": "Send Cross-Sell Email", "type": "main", "index": 0 }]] },
+    "Send Cross-Sell Email":       { "main": [[{ "node": "Mark Cross-Sell Sent", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "email-sequence" }, { "name": "bioneer" }]
+}

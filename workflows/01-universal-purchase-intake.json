@@ -1,0 +1,117 @@
+{
+  "name": "01 — Universal Purchase Intake",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wig-ml-purchase", "responseMode": "lastNode", "options": {} },
+      "id": "webhook-ml", "name": "Webhook: ML Purchase", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 200]
+    },
+    {
+      "parameters": { "httpMethod": "POST", "path": "wig-itg-purchase", "responseMode": "lastNode", "options": {} },
+      "id": "webhook-itg", "name": "Webhook: ITG Purchase", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 340]
+    },
+    {
+      "parameters": { "httpMethod": "POST", "path": "wig-itg-workbook-purchase", "responseMode": "lastNode", "options": {} },
+      "id": "webhook-workbook", "name": "Webhook: Workbook Purchase", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 480]
+    },
+    {
+      "parameters": { "httpMethod": "POST", "path": "wig-bundle-purchase", "responseMode": "lastNode", "options": {} },
+      "id": "webhook-bundle", "name": "Webhook: Architecture Set Purchase", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 620]
+    },
+    {
+      "parameters": { "httpMethod": "POST", "path": "skyforge-chatgpt-money", "responseMode": "lastNode", "options": {} },
+      "id": "webhook-sf1", "name": "Webhook: ChatGPT Money Mastery", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 760]
+    },
+    {
+      "parameters": { "httpMethod": "POST", "path": "skyforge-image-gen", "responseMode": "lastNode", "options": {} },
+      "id": "webhook-sf2", "name": "Webhook: AI Image Gen Mastery", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 900]
+    },
+    {
+      "parameters": { "httpMethod": "POST", "path": "skyforge-prompt-playbook", "responseMode": "lastNode", "options": {} },
+      "id": "webhook-sf3", "name": "Webhook: Prompt Playbook", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 1040]
+    },
+    {
+      "parameters": { "httpMethod": "POST", "path": "skyforge-ai-systems", "responseMode": "lastNode", "options": {} },
+      "id": "webhook-sf4", "name": "Webhook: AI Systems Operators", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 1180]
+    },
+    {
+      "parameters": { "httpMethod": "POST", "path": "skyforge-master-chatgpt", "responseMode": "lastNode", "options": {} },
+      "id": "webhook-sf5", "name": "Webhook: Master ChatGPT 2026", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 1320]
+    },
+    {
+      "parameters": { "httpMethod": "POST", "path": "skyforge-bundle", "responseMode": "lastNode", "options": {} },
+      "id": "webhook-sfbundle", "name": "Webhook: SkyforgeAI Bundle", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 1460]
+    },
+    {
+      "parameters": { "httpMethod": "POST", "path": "wig-bioneer-purchase", "responseMode": "lastNode", "options": {} },
+      "id": "webhook-bioneer", "name": "Webhook: BIONEER Purchase", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 1600]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst path = $input.first().json.webhookPath || '';\n\nconst PRODUCT_MAP = {\n  'wig-ml-purchase':           { brand: 'wig',          asset: 'modern_lovefair',          sequence: 'ml_email' },\n  'wig-itg-purchase':          { brand: 'wig',          asset: 'itg_individual',            sequence: 'itg_email' },\n  'wig-itg-workbook-purchase': { brand: 'wig',          asset: 'itg_workbook',              sequence: 'itg_workbook_email' },\n  'wig-bundle-purchase':       { brand: 'wig',          asset: 'architecture_set',          sequence: 'architecture_set_email' },\n  'skyforge-chatgpt-money':    { brand: 'skyforge_ai', asset: 'chatgpt_money_mastery',     sequence: 'skyforge_individual_email' },\n  'skyforge-image-gen':        { brand: 'skyforge_ai', asset: 'ai_image_gen_mastery',      sequence: 'skyforge_individual_email' },\n  'skyforge-prompt-playbook':  { brand: 'skyforge_ai', asset: 'prompt_playbook',           sequence: 'skyforge_individual_email' },\n  'skyforge-ai-systems':       { brand: 'skyforge_ai', asset: 'ai_systems_operators',      sequence: 'skyforge_individual_email' },\n  'skyforge-master-chatgpt':   { brand: 'skyforge_ai', asset: 'master_chatgpt_2026',       sequence: 'skyforge_individual_email' },\n  'skyforge-bundle':           { brand: 'skyforge_ai', asset: 'skyforge_mastery_collection', sequence: 'skyforge_bundle_email' },\n  'wig-bioneer-purchase':      { brand: 'bioneer',     asset: 'bioneer',                   sequence: 'bioneer_email' }\n};\n\nconst product = PRODUCT_MAP[path] || { brand: 'wig', asset: 'unknown', sequence: 'itg_email' };\n\nreturn [{\n  json: {\n    email:          body.email || body.purchaser_email || '',\n    full_name:      body.full_name || body.purchaser_name || '',\n    brand:          product.brand,\n    asset:          product.asset,\n    sequence:       product.sequence,\n    source_channel: body.referrer || 'gumroad',\n    price_paid:     parseFloat(body.price || body.sale_price || 0)\n  }\n}];"
+      },
+      "id": "normalize", "name": "Normalize Purchase Payload", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [600, 900]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": "public",
+        "table": "wig_customers",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "email": "={{ $json.email }}",
+          "full_name": "={{ $json.full_name }}",
+          "source_brand": "={{ $json.brand }}",
+          "source_asset": "={{ $json.asset }}",
+          "source_channel": "={{ $json.source_channel }}",
+          "active_sequence": "={{ $json.sequence }}",
+          "updated_at": "={{ $now }}"
+        }},
+        "additionalFields": { "onConflict": "email", "skipOnConflict": false }
+      },
+      "id": "upsert-customer", "name": "Upsert wig_customers", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [880, 900],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const brand = $input.first().json.brand;\nconst asset = $input.first().json.asset;\nconst sequence = $input.first().json.sequence;\n\n// Determine which downstream workflow to trigger\nconst SEQUENCE_WORKFLOW_MAP = {\n  'ml_email':                  'wf-02-ml-email',\n  'itg_email':                 'wf-03-itg-email',\n  'itg_workbook_email':        'wf-04-itg-workbook-email',\n  'architecture_set_email':    'wf-05-architecture-set-email',\n  'skyforge_individual_email': brand === 'bioneer' ? 'wf-08-bioneer-intake' : 'wf-06-skyforge-individual-email',\n  'skyforge_bundle_email':     'wf-07-skyforge-bundle-email',\n  'bioneer_email':             'wf-08-bioneer-intake'\n};\n\nreturn [{ json: { ...($input.first().json), trigger_workflow: SEQUENCE_WORKFLOW_MAP[sequence] || 'wf-02-ml-email' } }];"
+      },
+      "id": "route-sequence", "name": "Route to Email Sequence", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1160, 900]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": "public",
+        "table": "wig_daily_metrics",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "date": "={{ $today }}",
+          "new_customers": 1,
+          "total_revenue": "={{ $json.price_paid }}"
+        }},
+        "additionalFields": { "onConflict": "date" }
+      },
+      "id": "update-metrics", "name": "Update Daily Metrics", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1160, 1080],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={ \"status\": \"ok\" }" },
+      "id": "respond", "name": "Respond 200", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1, "position": [1440, 900]
+    }
+  ],
+  "connections": {
+    "Webhook: ML Purchase":            { "main": [[{ "node": "Normalize Purchase Payload", "type": "main", "index": 0 }]] },
+    "Webhook: ITG Purchase":           { "main": [[{ "node": "Normalize Purchase Payload", "type": "main", "index": 0 }]] },
+    "Webhook: Workbook Purchase":      { "main": [[{ "node": "Normalize Purchase Payload", "type": "main", "index": 0 }]] },
+    "Webhook: Architecture Set Purchase": { "main": [[{ "node": "Normalize Purchase Payload", "type": "main", "index": 0 }]] },
+    "Webhook: ChatGPT Money Mastery":  { "main": [[{ "node": "Normalize Purchase Payload", "type": "main", "index": 0 }]] },
+    "Webhook: AI Image Gen Mastery":   { "main": [[{ "node": "Normalize Purchase Payload", "type": "main", "index": 0 }]] },
+    "Webhook: Prompt Playbook":        { "main": [[{ "node": "Normalize Purchase Payload", "type": "main", "index": 0 }]] },
+    "Webhook: AI Systems Operators":   { "main": [[{ "node": "Normalize Purchase Payload", "type": "main", "index": 0 }]] },
+    "Webhook: Master ChatGPT 2026":    { "main": [[{ "node": "Normalize Purchase Payload", "type": "main", "index": 0 }]] },
+    "Webhook: SkyforgeAI Bundle":      { "main": [[{ "node": "Normalize Purchase Payload", "type": "main", "index": 0 }]] },
+    "Webhook: BIONEER Purchase":       { "main": [[{ "node": "Normalize Purchase Payload", "type": "main", "index": 0 }]] },
+    "Normalize Purchase Payload":      { "main": [[{ "node": "Upsert wig_customers", "type": "main", "index": 0 }]] },
+    "Upsert wig_customers":            { "main": [[{ "node": "Route to Email Sequence", "type": "main", "index": 0 }, { "node": "Update Daily Metrics", "type": "main", "index": 0 }]] },
+    "Route to Email Sequence":         { "main": [[{ "node": "Respond 200", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "purchase-intake" }]
+}

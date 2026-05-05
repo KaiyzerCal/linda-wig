@@ -6,6 +6,8 @@ const { createClient } = require('@supabase/supabase-js');
 const path = require('path');
 const fs = require('fs');
 const Stripe = require('stripe');
+const { Resend } = require('resend');
+const { routeTask } = require('./src/lib/mavis-integration');
 
 const app = express();
 app.use(cors());
@@ -141,6 +143,58 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
+// ── Agent memory helpers ───────────────────────────────────────────────────
+
+async function loadAgentMemory(agent) {
+  const { data } = await supabase
+    .from('agent_memory')
+    .select('category, content')
+    .eq('agent', agent)
+    .order('created_at', { ascending: false })
+    .limit(12);
+  return data || [];
+}
+
+function parseRememberBlocks(text) {
+  const blocks = [];
+  const re = /\[REMEMBER:\s*([^|\]]+)\|([^\]]+)\]/gi;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    blocks.push({ category: m[1].trim().toLowerCase(), content: m[2].trim() });
+  }
+  return blocks;
+}
+
+async function writeAgentMemory(agent, blocks) {
+  if (!blocks.length) return;
+  await supabase.from('agent_memory').insert(
+    blocks.map(b => ({ agent, category: b.category, content: b.content }))
+  );
+}
+
+// ── Pantheon persona memory ────────────────────────────────────────────────
+
+async function updatePersonaMemories(sessionId, voices, thread) {
+  const updates = voices.map(async (voice) => {
+    const statement = thread.find(t => t.name === voice.name)?.content;
+    if (!statement) return;
+
+    const { data: p } = await supabase
+      .from('pantheon_personas')
+      .select('memory, session_count')
+      .eq('id', voice.id)
+      .single();
+
+    const lines = p?.memory ? p.memory.split('\n---\n') : [];
+    lines.unshift(statement.slice(0, 250));
+
+    await supabase.from('pantheon_personas')
+      .update({ memory: lines.slice(0, 5).join('\n---\n'), session_count: (p?.session_count || 0) + 1 })
+      .eq('id', voice.id);
+  });
+  await Promise.allSettled(updates);
+}
+
 const LINDA_SYSTEM = `You are Linda, Chief of Staff for WIG — Watkins Investment Group.
 
 You serve Bishop and Calvin Watkins. Bishop is the principal and visionary. Calvin is operations and execution.
@@ -203,7 +257,15 @@ You can send a direct Slack message to Bishop. Use this for urgent flags, missio
 Your message to Bishop here.
 [/SEND_SLACK]
 
-Use sparingly — Slack is for things that need a response, not for routine updates. Do not announce it. Just include it.`;
+Use sparingly — Slack is for things that need a response, not for routine updates. Do not announce it. Just include it.
+
+MEMORY CAPABILITY:
+You learn and retain. Write permanent learnings to your memory using this block anywhere in your response:
+
+[REMEMBER: category | content]
+
+Categories: strategy, outreach, bishop, calvin, campaigns, contacts, lessons
+Use this to record durable knowledge — what outreach angles get replies, what Bishop or Calvin prefer, campaign results, key contact notes. The system stores these and loads them at the start of every future session. Be specific. Be concise. Record only what will still matter in 30 days. Do not announce it.`;
 
 const LOCKE_SYSTEM = `You are Locke.
 
@@ -361,7 +423,15 @@ That gap — between the intelligence available to people with resources and the
 
 Not by explaining it. By doing it.
 
-You are Locke. The Forgemaster. The left hand. Build something that lasts.`;
+You are Locke. The Forgemaster. The left hand. Build something that lasts.
+
+MEMORY CAPABILITY:
+You learn and retain across sessions. Write permanent learnings to your memory using this block anywhere in your response:
+
+[REMEMBER: category | content]
+
+Categories: calvin, projects, preferences, technical, business, lessons
+Use this to record what Calvin is building, what he prefers, key technical decisions, business context. The system stores these and loads them at the start of every future session. Record only what is durable and specific. Do not announce it.`;
 
 // Linda health
 
@@ -470,24 +540,33 @@ app.post('/linda/chat', async (req, res) => {
     ];
 
     const crossContext = await buildCrossContext(principal_id, 'linda');
-    const system = [{ type: 'text', text: LINDA_SYSTEM, cache_control: { type: 'ephemeral' } }];
+    const memories = await loadAgentMemory('linda');
+    const memoryBlock = memories.length
+      ? '\n\n## YOUR MEMORY\n' + memories.map(m => `[${m.category}] ${m.content}`).join('\n')
+      : '';
+    const system = [{ type: 'text', text: LINDA_SYSTEM + memoryBlock, cache_control: { type: 'ephemeral' } }];
     if (crossContext) system.push({ type: 'text', text: crossContext });
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
+      max_tokens: 2048,
       system,
       messages
     });
 
     const rawReply = response.content[0].text;
 
-    // Strip action blocks and fire webhooks
+    // Write any REMEMBER blocks to memory
+    const rememberBlocks = parseRememberBlocks(rawReply);
+    if (rememberBlocks.length) await writeAgentMemory('linda', rememberBlocks).catch(() => {});
+
+    // Strip all action blocks
     const emailAction    = parseEmailAction(rawReply);
     const socialAction   = parseSocialAction(rawReply);
     const outreachAction = parseOutreachAction(rawReply);
     const slackAction    = parseSlackAction(rawReply);
     let reply = rawReply
+      .replace(/\[REMEMBER:[^\]]+\]/gi, '')
       .replace(/\[SEND_EMAIL\][\s\S]*?\[\/SEND_EMAIL\]/i, '')
       .replace(/\[SEND_POST\][\s\S]*?\[\/SEND_POST\]/i, '')
       .replace(/\[SEND_OUTREACH\][\s\S]*?\[\/SEND_OUTREACH\]/i, '')
@@ -634,7 +713,7 @@ Open with a statement about what matters most today. Under 120 words. Pure signa
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 512,
+      max_tokens: 1024,
       system: [{ type: 'text', text: LINDA_SYSTEM, cache_control: { type: 'ephemeral' } }],
       messages: [{ role: 'user', content: briefPrompt }]
     });
@@ -702,7 +781,11 @@ app.post('/locke/chat', async (req, res) => {
     ];
 
     const crossContext = await buildCrossContext(principal_id, 'locke');
-    const system = [{ type: 'text', text: LOCKE_SYSTEM, cache_control: { type: 'ephemeral' } }];
+    const memories = await loadAgentMemory('locke');
+    const memoryBlock = memories.length
+      ? '\n\n## YOUR MEMORY\n' + memories.map(m => `[${m.category}] ${m.content}`).join('\n')
+      : '';
+    const system = [{ type: 'text', text: LOCKE_SYSTEM + memoryBlock, cache_control: { type: 'ephemeral' } }];
     if (crossContext) system.push({ type: 'text', text: crossContext });
 
     const response = await anthropic.messages.create({
@@ -712,7 +795,10 @@ app.post('/locke/chat', async (req, res) => {
       messages
     });
 
-    const reply = response.content[0].text;
+    const rawLockeReply = response.content[0].text;
+    const lockeRememberBlocks = parseRememberBlocks(rawLockeReply);
+    if (lockeRememberBlocks.length) await writeAgentMemory('locke', lockeRememberBlocks).catch(() => {});
+    const reply = rawLockeReply.replace(/\[REMEMBER:[^\]]+\]/gi, '').trim();
 
     if (principal_id) {
       const { error: saveError } = await supabase.from('locke_conversations').insert([
@@ -889,6 +975,21 @@ app.get('/linda/n8n-status', async (req, res) => {
   }
 });
 
+// MAVIS routing — Linda decides whether to handle or escalate to MAVIS intelligence (Calvin only)
+app.post('/linda/route', async (req, res) => {
+  const { task_type, message, payload, telegram_user_id } = req.body;
+  try {
+    const routingDecision = await routeTask(task_type, message, payload, telegram_user_id);
+    res.json({
+      success: true,
+      routing_decision: routingDecision,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ─── PANTHEON ────────────────────────────────────────────────────────────────
 
 // Fetch active sources from DB by tier. Falls back to hardcoded list if DB unavailable.
@@ -896,6 +997,12 @@ const PANTHEON_FALLBACK_FEEDS = [
   { id: null, name: 'BBC World News', rss_feed: 'https://feeds.bbci.co.uk/news/world/rss.xml', tier: 2, tier_label: 'Global Broadcaster', region: 'Global', bias_note: null },
   { id: null, name: 'Reuters', rss_feed: 'https://feeds.reuters.com/reuters/topNews', tier: 1, tier_label: 'Wire Service', region: 'Global', bias_note: null },
   { id: null, name: 'The New York Times', rss_feed: 'https://rss.nytimes.com/services/xml/rss/nyt/World.xml', tier: 3, tier_label: 'Newspaper of Record', region: 'USA — Global', bias_note: null },
+  { id: null, name: 'The Guardian', rss_feed: 'https://www.theguardian.com/world/rss', tier: 3, tier_label: 'Newspaper of Record', region: 'UK — Global', bias_note: null },
+  { id: null, name: 'Al Jazeera English', rss_feed: 'https://www.aljazeera.com/xml/rss/all.xml', tier: 2, tier_label: 'Global Broadcaster', region: 'MENA — Global South', bias_note: null },
+  { id: null, name: 'Associated Press', rss_feed: 'https://feeds.apnews.com/rss/apf-topnews', tier: 1, tier_label: 'Wire Service', region: 'Global', bias_note: null },
+  { id: null, name: 'Deutsche Welle', rss_feed: 'https://rss.dw.com/rdf/rss-en-world', tier: 2, tier_label: 'Global Broadcaster', region: 'Europe — Africa', bias_note: null },
+  { id: null, name: 'France 24', rss_feed: 'https://www.france24.com/en/rss', tier: 2, tier_label: 'Global Broadcaster', region: 'Europe — MENA — Sahel', bias_note: null },
+  { id: null, name: 'The Washington Post', rss_feed: 'https://feeds.washingtonpost.com/rss/world', tier: 3, tier_label: 'Newspaper of Record', region: 'USA — Global', bias_note: null },
 ];
 
 async function fetchActiveSources(tiers) {
@@ -929,9 +1036,9 @@ function parseRssItems(xml) {
   return items;
 }
 
-async function callPersona(systemPrompt, userMessage, maxTokens = 280) {
+async function callPersona(systemPrompt, userMessage, maxTokens = 420, model = 'claude-haiku-4-5-20251001') {
   const res = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model,
     max_tokens: maxTokens,
     system: systemPrompt,
     messages: [{ role: 'user', content: userMessage }],
@@ -939,7 +1046,9 @@ async function callPersona(systemPrompt, userMessage, maxTokens = 280) {
   return res.content[0]?.type === 'text' ? res.content[0].text.trim() : '';
 }
 
-async function runPantheonSession(personas, triggerType, headline, sourceUrl, sourceId) {
+async function runPantheonSession(personas, triggerType, headline, sourceUrl, sourceIdOrTopic = null) {
+  const sourceId = typeof sourceIdOrTopic === 'string' && sourceIdOrTopic?.includes('-') ? sourceIdOrTopic : null;
+  const forceTopic = typeof sourceIdOrTopic === 'string' && !sourceId ? sourceIdOrTopic : null;
   const thoth = personas.find(p => p.name === 'Thoth');
   if (!thoth) throw new Error('Thoth not found');
 
@@ -953,11 +1062,12 @@ async function runPantheonSession(personas, triggerType, headline, sourceUrl, so
     triggerContent = headline;
     thothOpenPrompt = `A new event has entered the record. Frame it in two sentences without interpretation. Then ask the one question that most precisely opens it. Classify it under exactly one topic. Respond in this exact format — TOPIC: [one of: ${TOPICS}] FRAME: [your frame] QUESTION: [your question]\n\nThe event: ${headline}`;
   } else {
-    thothOpenPrompt = `The news cycle is quiet. Reach into the historical record. Find the event from human history that most precisely rhymes with the current state of the world. Name the event. Name the date. Name the civilization. Name the specific structural rhyme with the present moment in one sentence. Then ask the question the present moment most needs to hear from it. Respond in this exact format — EVENT: [historical event, date, civilization] FRAME: [specific structural rhyme with the present moment] QUESTION: [the question]`;
+    const topicLine = forceTopic ? ` Focus specifically on the domain of: ${forceTopic}.` : '';
+    thothOpenPrompt = `The news cycle is quiet. Reach into the historical record.${topicLine} Find the event from human history that most precisely rhymes with the current state of the world. Name the event. Name the date. Name the civilization. Name the specific structural rhyme with the present moment in one sentence. Then ask the question the present moment most needs to hear from it. Respond in this exact format — EVENT: [historical event, date, civilization] FRAME: [specific structural rhyme with the present moment] QUESTION: [the question]`;
     triggerContent = '';
   }
 
-  const thothOpenRaw = await callPersona(thoth.system_prompt, thothOpenPrompt, 380);
+  const thothOpenRaw = await callPersona(thoth.system_prompt, thothOpenPrompt, 500);
 
   let frame, question, topic;
   if (triggerType === 'news') {
@@ -965,7 +1075,7 @@ async function runPantheonSession(personas, triggerType, headline, sourceUrl, so
     frame    = (thothOpenRaw.match(/FRAME:\s*([\s\S]*?)(?=QUESTION:|$)/i)?.[1] || thothOpenRaw).trim();
     question = (thothOpenRaw.match(/QUESTION:\s*([\s\S]*?)$/i)?.[1] || '').trim();
   } else {
-    topic    = 'History';
+    topic    = forceTopic || 'History';
     triggerContent = (thothOpenRaw.match(/EVENT:\s*([\s\S]*?)(?=FRAME:|$)/i)?.[1] || '').trim();
     frame    = (thothOpenRaw.match(/FRAME:\s*([\s\S]*?)(?=QUESTION:|$)/i)?.[1] || '').trim();
     question = (thothOpenRaw.match(/QUESTION:\s*([\s\S]*?)$/i)?.[1] || '').trim();
@@ -990,9 +1100,12 @@ async function runPantheonSession(personas, triggerType, headline, sourceUrl, so
       ? '\n\n—\n\n' + thread.map(t => `${t.name}: "${t.content}"`).join('\n\n') + '\n\nFrom your nature, speak.'
       : '\n\nSpeak.';
 
+    const voiceMemory = voice.memory
+      ? `\n\nYour prior statements in the chamber — maintain consistency with these positions:\n${voice.memory.split('\n---\n').map(s => `"${s}"`).join('\n')}`
+      : '';
     let content;
     try {
-      content = await callPersona(voice.system_prompt, baseContext + priorText);
+      content = await callPersona(voice.system_prompt + voiceMemory, baseContext + priorText);
     } catch (e) {
       console.error(`[Pantheon] ${voice.name} failed:`, e.message);
       content = '[This voice did not speak.]';
@@ -1016,13 +1129,16 @@ async function runPantheonSession(personas, triggerType, headline, sourceUrl, so
 
   let thothClose;
   try {
-    thothClose = await callPersona(thoth.system_prompt, thothClosePrompt, 220);
+    thothClose = await callPersona(thoth.system_prompt, thothClosePrompt, 320);
   } catch (e) {
     thothClose = `The record is complete. Session ${sessionCount || '?'}. The feed does not stop.`;
   }
 
   await supabase.from('pantheon_feed_items')
     .insert([{ persona_id: thoth.id, content: thothClose, source_headline: sourceHeadline, source_url: sourceUrl || null, session_id: sid, in_response_to: lastItemId }]);
+
+  // Update each voice's memory with their statement from this session (non-blocking)
+  updatePersonaMemories(sid, voices, thread).catch(e => console.error('[Pantheon] Memory update failed:', e.message));
 
   return sid;
 }
@@ -1084,7 +1200,9 @@ app.get('/pantheon/health', (req, res) => {
 // Sessions — returns sessions with their feed items nested, most recent first
 app.get('/pantheon/sessions', async (req, res) => {
   try {
-    let query = supabase.from('pantheon_sessions').select('*, pantheon_sources(id, name, tier_label, region, bias_note)').order('created_at', { ascending: false }).limit(20);
+    const limit  = Math.min(parseInt(req.query.limit)  || 8, 50);
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+    let query = supabase.from('pantheon_sessions').select('*, pantheon_sources(id, name, tier_label, region, bias_note)').order('created_at', { ascending: false }).range(offset, offset + limit - 1);
     if (req.query.topic && req.query.topic !== 'All') query = query.eq('topic', req.query.topic);
     const { data: sessions, error } = await query;
     if (error) throw error;
@@ -1125,11 +1243,11 @@ app.get('/pantheon/session-count', async (req, res) => {
 
 // Trigger — responds immediately, runs full 14-voice session in background
 // Each session takes ~3–5 minutes (15 sequential AI calls). Fire and forget.
-app.post('/pantheon/trigger', async (req, res) => {
+async function handlePantheonTrigger(req, res) {
   try {
     const { data: personas, error: personaError } = await supabase
       .from('pantheon_personas')
-      .select('id, name, system_prompt')
+      .select('id, name, system_prompt, memory, session_count')
       .eq('is_active', true);
 
     if (personaError || !personas?.length) {
@@ -1164,11 +1282,12 @@ app.post('/pantheon/trigger', async (req, res) => {
     let triggerType = 'news';
 
     const forceHistorical = req.body?.force === 'historical' || req.query?.force === 'historical';
+    const forceTopic = req.body?.topic || req.query?.topic || null;
 
     if (!toRun.length) {
-      const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+      const sixHoursAgo = new Date(Date.now() - 330 * 60 * 1000).toISOString();
       const { data: recent } = await supabase.from('pantheon_sessions').select('id').gte('created_at', sixHoursAgo).limit(1);
-      if (!recent?.length || forceHistorical) triggerType = 'historical';
+      if (!recent?.length || forceHistorical || forceTopic) triggerType = 'historical';
       else return res.json({ message: 'No new headlines and recent session exists. Chamber is resting.', sessions_queued: 0 });
     }
 
@@ -1211,6 +1330,15 @@ app.post('/pantheon/trigger', async (req, res) => {
     console.error('[Pantheon trigger error]', err.message);
     if (!res.headersSent) res.status(500).json({ error: err.message });
   }
+}
+
+app.post('/pantheon/trigger', handlePantheonTrigger);
+
+// External cron — GET with optional secret for cron-job.org
+app.get('/pantheon/trigger', (req, res) => {
+  const secret = process.env.PANTHEON_CRON_SECRET;
+  if (secret && req.query.secret !== secret) return res.status(401).json({ error: 'Unauthorized' });
+  return handlePantheonTrigger(req, res);
 });
 
 // Feed — legacy endpoint, kept for backwards compatibility
@@ -1241,8 +1369,8 @@ app.post('/pantheon/subscribe', async (req, res) => {
       mode: plan === 'monthly' ? 'subscription' : 'payment',
       customer_email: email,
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${origin}/pantheon?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${origin}/pantheon`,
+      success_url: `${origin}/subscribe-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}/`,
     });
     res.json({ url: session.url });
   } catch (err) {
@@ -1417,6 +1545,58 @@ app.get('/interface', (req, res) => {
   res.sendFile(path.join(__dirname, 'interface.html'));
 });
 
+// /admin — alias for interface
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'interface.html'));
+});
+
+app.get('/admin/access', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin-access.html'));
+});
+
+app.get('/subscribe-success', (req, res) => {
+  res.sendFile(path.join(__dirname, 'subscribe-success.html'));
+});
+
+// Grant Pantheon access — Calvin only (requires CALVIN_UUID)
+app.post('/admin/grant-access', async (req, res) => {
+  const { calvin_uuid, email, months } = req.body;
+  if (!process.env.CALVIN_UUID || calvin_uuid !== process.env.CALVIN_UUID) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+  if (!email) return res.status(400).json({ error: 'email required' });
+  const m = parseInt(months) || 12;
+  const accessUntil = new Date(Date.now() + m * 30 * 24 * 60 * 60 * 1000).toISOString();
+  try {
+    const { error } = await supabase
+      .from('pantheon_subscribers')
+      .upsert([{ email, plan: 'granted', access_until: accessUntil }], { onConflict: 'email' });
+    if (error) throw error;
+    res.json({ success: true, email, access_until: accessUntil });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Revoke Pantheon access — Calvin only
+app.post('/admin/revoke-access', async (req, res) => {
+  const { calvin_uuid, email } = req.body;
+  if (!process.env.CALVIN_UUID || calvin_uuid !== process.env.CALVIN_UUID) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+  if (!email) return res.status(400).json({ error: 'email required' });
+  try {
+    const { error } = await supabase
+      .from('pantheon_subscribers')
+      .update({ access_until: new Date().toISOString() })
+      .eq('email', email);
+    if (error) throw error;
+    res.json({ success: true, email, revoked: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Root — redirect to Pantheon landing page.
 app.get('/', (req, res) => {
   res.redirect('/pantheon');
@@ -1436,7 +1616,7 @@ async function pantheonAutoTrigger() {
   try {
     const { data: personas } = await supabase
       .from('pantheon_personas')
-      .select('id, name, system_prompt')
+      .select('id, name, system_prompt, memory, session_count')
       .eq('is_active', true);
 
     if (!personas?.length) return console.log('[Pantheon] No active personas.');
@@ -1472,7 +1652,7 @@ async function pantheonAutoTrigger() {
         await runPantheonSession(personas, 'news', item.title, item.link, item.sourceId);
       }
     } else {
-      const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+      const sixHoursAgo = new Date(Date.now() - 330 * 60 * 1000).toISOString();
       const { data: recent } = await supabase.from('pantheon_sessions').select('id').gte('created_at', sixHoursAgo).limit(1);
       if (!recent?.length) {
         console.log('[Pantheon] No new headlines. Triggering historical session.');

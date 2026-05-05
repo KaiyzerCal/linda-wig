@@ -1,0 +1,139 @@
+{
+  "name": "02 — Modern Lovefair Email Sequence",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "trigger-ml-email", "responseMode": "lastNode", "options": {} },
+      "id": "trigger", "name": "Trigger", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "wig_customers",
+        "filterType": "string",
+        "filterString": "active_sequence=eq.ml_email&email_1_sent_at=is.null"
+      },
+      "id": "get-pending", "name": "Get Pending Email 1", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": { "conditions": { "options": { "caseSensitive": true }, "conditions": [{ "id": "1", "leftValue": "={{ $json.email }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty" } }] } },
+      "id": "has-email", "name": "Has Email?", "type": "n8n-nodes-base.filter", "typeVersion": 2, "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "email_templates",
+        "filterType": "string",
+        "filterString": "sequence_name=eq.ml_email&email_number=eq.1"
+      },
+      "id": "get-template-1", "name": "Get Email 1 Template", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1020, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "Bearer {{ $env.RESEND_API_KEY }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "from", "value": "Linda <linda@wigmail.co>" },
+          { "name": "to", "value": "={{ $('Get Pending Email 1').item.json.email }}" },
+          { "name": "subject", "value": "={{ $json.subject }}" },
+          { "name": "html", "value": "={{ $json.body_html.replace('{{full_name}}', $('Get Pending Email 1').item.json.full_name || 'Friend') }}" }
+        ]}
+      },
+      "id": "send-email-1", "name": "Send Email 1", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "wig_customers",
+        "filterType": "string",
+        "filterString": "email=eq.{{ $('Get Pending Email 1').item.json.email }}",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "email_1_sent_at": "={{ $now }}",
+          "funnel_stage": "EMAIL_2",
+          "updated_at": "={{ $now }}"
+        }}
+      },
+      "id": "mark-sent-1", "name": "Mark Email 1 Sent", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1540, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "wig_customers",
+        "filterType": "string",
+        "filterString": "active_sequence=eq.ml_email&email_1_sent_at=not.is.null&email_2_sent_at=is.null&email_1_sent_at=lt.{{ new Date(Date.now() - 3*24*60*60*1000).toISOString() }}"
+      },
+      "id": "get-email2", "name": "Get Pending Email 2 (Day 3)", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 500],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "email_templates",
+        "filterType": "string",
+        "filterString": "sequence_name=eq.ml_email&email_number=eq.2"
+      },
+      "id": "get-template-2", "name": "Get Email 2 Template", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [760, 500],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "Bearer {{ $env.RESEND_API_KEY }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "from", "value": "Linda <linda@wigmail.co>" },
+          { "name": "to", "value": "={{ $('Get Pending Email 2 (Day 3)').item.json.email }}" },
+          { "name": "subject", "value": "={{ $json.subject }}" },
+          { "name": "html", "value": "={{ $json.body_html.replace('{{full_name}}', $('Get Pending Email 2 (Day 3)').item.json.full_name || 'Friend') }}" }
+        ]}
+      },
+      "id": "send-email-2", "name": "Send Email 2", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1020, 500]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "wig_customers",
+        "filterType": "string",
+        "filterString": "email=eq.{{ $('Get Pending Email 2 (Day 3)').item.json.email }}",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "email_2_sent_at": "={{ $now }}",
+          "funnel_stage": "EMAIL_3",
+          "cross_sell_eligible": true,
+          "updated_at": "={{ $now }}"
+        }}
+      },
+      "id": "mark-sent-2", "name": "Mark Email 2 Sent", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1280, 500],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={ \"status\": \"ok\" }" },
+      "id": "respond", "name": "Respond 200", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1, "position": [1800, 300]
+    }
+  ],
+  "connections": {
+    "Trigger":                       { "main": [[{ "node": "Get Pending Email 1", "type": "main", "index": 0 }, { "node": "Get Pending Email 2 (Day 3)", "type": "main", "index": 0 }]] },
+    "Get Pending Email 1":           { "main": [[{ "node": "Has Email?", "type": "main", "index": 0 }]] },
+    "Has Email?":                    { "main": [[{ "node": "Get Email 1 Template", "type": "main", "index": 0 }]] },
+    "Get Email 1 Template":          { "main": [[{ "node": "Send Email 1", "type": "main", "index": 0 }]] },
+    "Send Email 1":                  { "main": [[{ "node": "Mark Email 1 Sent", "type": "main", "index": 0 }]] },
+    "Mark Email 1 Sent":             { "main": [[{ "node": "Respond 200", "type": "main", "index": 0 }]] },
+    "Get Pending Email 2 (Day 3)":   { "main": [[{ "node": "Get Email 2 Template", "type": "main", "index": 0 }]] },
+    "Get Email 2 Template":          { "main": [[{ "node": "Send Email 2", "type": "main", "index": 0 }]] },
+    "Send Email 2":                  { "main": [[{ "node": "Mark Email 2 Sent", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "email-sequence" }, { "name": "wig" }]
+}

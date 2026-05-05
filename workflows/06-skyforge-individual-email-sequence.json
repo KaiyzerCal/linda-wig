@@ -1,0 +1,90 @@
+{
+  "name": "06 — SkyforgeAI Individual Product Sequence",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "hours", "hoursInterval": 6 }] } },
+      "id": "cron", "name": "Every 6 Hours", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "wig_customers",
+        "filterType": "string", "filterString": "active_sequence=eq.skyforge_individual_email&email_1_sent_at=is.null"
+      },
+      "id": "get-e1", "name": "Pending Email 1", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 200],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "wig_customers",
+        "filterType": "string",
+        "filterString": "active_sequence=eq.skyforge_individual_email&email_1_sent_at=not.is.null&email_2_sent_at=is.null&skyforge_bundle_purchased=eq.false&email_1_sent_at=lt.{{ new Date(Date.now()-2*86400000).toISOString() }}"
+      },
+      "id": "get-e2", "name": "Pending Upsell Email (Day 2)", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 400],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "wig_customers",
+        "filterType": "string",
+        "filterString": "active_sequence=eq.skyforge_individual_email&email_2_sent_at=not.is.null&email_3_sent_at=is.null&skyforge_bundle_purchased=eq.false&email_2_sent_at=lt.{{ new Date(Date.now()-3*86400000).toISOString() }}"
+      },
+      "id": "get-e3", "name": "Pending Bundle Offer (Day 5)", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [500, 600],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "upsert", "schema": "public", "table": "skyforge_customers",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "email": "={{ $json.email }}",
+          "full_name": "={{ $json.full_name }}",
+          "entry_product": "={{ $json.source_asset }}",
+          "updated_at": "={{ $now }}"
+        }},
+        "additionalFields": { "onConflict": "email" }
+      },
+      "id": "upsert-sf", "name": "Upsert skyforge_customers", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [760, 200],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "email_templates",
+        "filterType": "string", "filterString": "sequence_name=eq.skyforge_individual_email&email_number=eq.1"
+      },
+      "id": "tmpl-1", "name": "Template E1", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1020, 200],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST", "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "Bearer {{ $env.RESEND_API_KEY }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "from", "value": "SkyforgeAI <hello@skyforge.ai>" },
+          { "name": "to", "value": "={{ $('Pending Email 1').item.json.email }}" },
+          { "name": "subject", "value": "={{ $('Template E1').item.json.subject }}" },
+          { "name": "html", "value": "={{ $('Template E1').item.json.body_html.replace('{{full_name}}', $('Pending Email 1').item.json.full_name || 'Friend').replace('{{product}}', $('Pending Email 1').item.json.source_asset || 'your course') }}" }
+        ]}
+      },
+      "id": "send-e1", "name": "Send E1", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, 200]
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "wig_customers",
+        "filterType": "string", "filterString": "email=eq.{{ $('Pending Email 1').item.json.email }}",
+        "columns": { "mappingMode": "defineBelow", "value": { "email_1_sent_at": "={{ $now }}", "funnel_stage": "EMAIL_2", "skyforge_offered": true, "updated_at": "={{ $now }}" } }
+      },
+      "id": "mark-e1", "name": "Mark E1 Sent", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1540, 200],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    }
+  ],
+  "connections": {
+    "Every 6 Hours":                 { "main": [[{ "node": "Pending Email 1", "type": "main", "index": 0 }, { "node": "Pending Upsell Email (Day 2)", "type": "main", "index": 0 }, { "node": "Pending Bundle Offer (Day 5)", "type": "main", "index": 0 }]] },
+    "Pending Email 1":               { "main": [[{ "node": "Upsert skyforge_customers", "type": "main", "index": 0 }]] },
+    "Upsert skyforge_customers":     { "main": [[{ "node": "Template E1", "type": "main", "index": 0 }]] },
+    "Template E1":                   { "main": [[{ "node": "Send E1", "type": "main", "index": 0 }]] },
+    "Send E1":                       { "main": [[{ "node": "Mark E1 Sent", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "email-sequence" }, { "name": "skyforge" }]
+}

@@ -1,0 +1,80 @@
+{
+  "name": "30 — Marine Qualification Intake",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "marine-qualify", "responseMode": "lastNode", "options": {} },
+      "id": "webhook", "name": "Webhook: Marine Qualification Form", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $input.first().json.body || $input.first().json;\nreturn [{ json: {\n  contact_name: b.contact_name || b.name || '',\n  phone: b.phone || '',\n  email: b.email || '',\n  business_name: b.business_name || b.company || '',\n  property_address: b.property_address || b.address || '',\n  market: b.market || (b.property_address?.toLowerCase().includes('stuart') ? 'stuart' : 'west_palm_beach'),\n  project_type: Array.isArray(b.project_type) ? b.project_type : [b.project_type || ''],\n  property_type: b.property_type || 'residential',\n  timeline: b.timeline || '',\n  budget_range: b.budget_range || '',\n  scope_notes: b.scope_notes || b.description || ''\n}}];"
+      },
+      "id": "normalize", "name": "Normalize Form", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nlet score = 40;\nif (d.phone) score += 25;\nif (d.property_address) score += 10;\nif (d.project_type?.length > 0) score += 10;\nif (d.timeline && !d.timeline.includes('unsure')) score += 10;\nif (d.budget_range && !d.budget_range.includes('unsure')) score += 10;\nif (d.property_type === 'hoa' || d.property_type === 'commercial') score += 5;\nreturn [{ json: { ...d, lead_score: Math.min(score, 100) } }];"
+      },
+      "id": "score", "name": "Score Lead", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert", "schema": "public", "table": "marine_qualified_leads",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "contact_name": "={{ $json.contact_name }}",
+          "phone": "={{ $json.phone }}",
+          "email": "={{ $json.email }}",
+          "business_name": "={{ $json.business_name }}",
+          "property_address": "={{ $json.property_address }}",
+          "market": "={{ $json.market }}",
+          "project_type": "={{ $json.project_type }}",
+          "property_type": "={{ $json.property_type }}",
+          "timeline": "={{ $json.timeline }}",
+          "budget_range": "={{ $json.budget_range }}",
+          "scope_notes": "={{ $json.scope_notes }}",
+          "lead_score": "={{ $json.lead_score }}",
+          "status": "qualified"
+        }}
+      },
+      "id": "insert-lead", "name": "Insert marine_qualified_leads", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1020, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LINDA_URL }}/linda/zapier/webhook",
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "event", "value": "marine_lead_qualified" },
+          { "name": "contact_name", "value": "={{ $('Score Lead').item.json.contact_name }}" },
+          { "name": "market", "value": "={{ $('Score Lead').item.json.market }}" },
+          { "name": "lead_score", "value": "={{ $('Score Lead').item.json.lead_score }}" },
+          { "name": "project_type", "value": "={{ $('Score Lead').item.json.project_type.join(', ') }}" }
+        ]}
+      },
+      "id": "notify", "name": "Notify Linda → Matt", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "wig_daily_metrics",
+        "filterType": "string", "filterString": "date=eq.{{ $today }}",
+        "columns": { "mappingMode": "defineBelow", "value": { "marine_qualified": 1 } }
+      },
+      "id": "update-metrics", "name": "Update Metrics", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1280, 480],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={ \"status\": \"ok\" }" },
+      "id": "respond", "name": "Respond 200", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1, "position": [1540, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: Marine Qualification Form": { "main": [[{ "node": "Normalize Form", "type": "main", "index": 0 }]] },
+    "Normalize Form":                     { "main": [[{ "node": "Score Lead", "type": "main", "index": 0 }]] },
+    "Score Lead":                         { "main": [[{ "node": "Insert marine_qualified_leads", "type": "main", "index": 0 }]] },
+    "Insert marine_qualified_leads":      { "main": [[{ "node": "Notify Linda → Matt", "type": "main", "index": 0 }, { "node": "Update Metrics", "type": "main", "index": 0 }]] },
+    "Notify Linda → Matt":               { "main": [[{ "node": "Respond 200", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "marine" }, { "name": "qualification" }]
+}

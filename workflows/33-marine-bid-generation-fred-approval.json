@@ -1,0 +1,99 @@
+{
+  "name": "33 — Marine Bid Generation → Fred Approval",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "marine-site-visit-complete", "responseMode": "lastNode", "options": {} },
+      "id": "webhook", "name": "Webhook: Site Visit Complete", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $input.first().json.body || $input.first().json;\nreturn [{ json: {\n  lead_id: b.lead_id || '',\n  contact_name: b.contact_name || '',\n  contact_email: b.contact_email || b.email || '',\n  site_visit_notes: b.site_visit_notes || b.notes || '',\n  materials_needed: Array.isArray(b.materials_needed) ? b.materials_needed : [],\n  labor_hours: parseFloat(b.labor_hours || 0),\n  complexity: b.complexity || 'standard'\n}}];"
+      },
+      "id": "normalize", "name": "Normalize Site Visit", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "marine_pricing"
+      },
+      "id": "get-pricing", "name": "Get Current Pricing", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [760, 200],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "operation": "select", "schema": "public", "table": "system_prompts",
+        "filterType": "string", "filterString": "prompt_name=eq.write_marine_bid"
+      },
+      "id": "get-prompt", "name": "Get Bid Prompt", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [760, 440],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const pricing = $('Get Current Pricing').all().map(r => `${r.json.item_name}: $${r.json.price}/${r.json.unit} (${r.json.trend})`).join('\\n');\nconst visit = $('Normalize Site Visit').item.json;\nconst labor_cost = visit.labor_hours * 85;\nreturn [{ json: { ...visit, pricing_table: pricing, labor_cost } }];"
+      },
+      "id": "calc-costs", "name": "Calculate Costs", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1020, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+          { "name": "anthropic-version", "value": "2023-06-01" }
+        ]},
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "model", "value": "claude-sonnet-4-6" },
+          { "name": "max_tokens", "value": "800" },
+          { "name": "system", "value": "={{ $('Get Bid Prompt').item.json.content }}" },
+          { "name": "messages", "value": "=[{\"role\": \"user\", \"content\": \"Site visit notes: {{ $('Calculate Costs').item.json.site_visit_notes }}\\nMaterials needed: {{ ($('Calculate Costs').item.json.materials_needed || []).join(', ') }}\\nLabor hours estimated: {{ $('Calculate Costs').item.json.labor_hours }} hrs @ $85/hr = ${{ $('Calculate Costs').item.json.labor_cost }}\\nCurrent pricing:\\n{{ $('Calculate Costs').item.json.pricing_table }}\"}]" }
+        ]}
+      },
+      "id": "gen-bid", "name": "Generate Bid Document", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update", "schema": "public", "table": "marine_qualified_leads",
+        "filterType": "string", "filterString": "id=eq.{{ $('Normalize Site Visit').item.json.lead_id }}",
+        "columns": { "mappingMode": "defineBelow", "value": {
+          "site_visit_notes": "={{ $('Normalize Site Visit').item.json.site_visit_notes }}",
+          "bid_generated": true,
+          "status": "bid_pending_approval"
+        }}
+      },
+      "id": "update-lead", "name": "Update Lead", "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1540, 300],
+      "credentials": { "supabaseApi": { "id": "supabase-creds", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "method": "POST", "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "Bearer {{ $env.RESEND_API_KEY }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "from", "value": "Linda <linda@fredsmarineconstruction.com>" },
+          { "name": "to", "value": "={{ $env.FRED_EMAIL }}" },
+          { "name": "subject", "value": "Bid Ready for Review — {{ $('Normalize Site Visit').item.json.contact_name }}" },
+          { "name": "html", "value": "=<h2>Bid Approval Needed</h2><p><strong>Client:</strong> {{ $('Normalize Site Visit').item.json.contact_name }}</p><hr>{{ $('Generate Bid Document').item.json.content?.[0]?.text || '' }}<hr><p><a href='{{ $env.LINDA_URL }}/marine-approve/{{ $('Normalize Site Visit').item.json.lead_id }}'>APPROVE BID</a> | Reply REVISE to request changes.</p>" }
+        ]}
+      },
+      "id": "send-to-fred", "name": "Send Bid to Fred", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1800, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={ \"status\": \"ok\" }" },
+      "id": "respond", "name": "Respond 200", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1, "position": [2060, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: Site Visit Complete": { "main": [[{ "node": "Normalize Site Visit", "type": "main", "index": 0 }]] },
+    "Normalize Site Visit":        { "main": [[{ "node": "Get Current Pricing", "type": "main", "index": 0 }, { "node": "Get Bid Prompt", "type": "main", "index": 0 }]] },
+    "Get Current Pricing":         { "main": [[{ "node": "Calculate Costs", "type": "main", "index": 0 }]] },
+    "Get Bid Prompt":              { "main": [[{ "node": "Calculate Costs", "type": "main", "index": 0 }]] },
+    "Calculate Costs":             { "main": [[{ "node": "Generate Bid Document", "type": "main", "index": 0 }]] },
+    "Generate Bid Document":       { "main": [[{ "node": "Update Lead", "type": "main", "index": 0 }]] },
+    "Update Lead":                 { "main": [[{ "node": "Send Bid to Fred", "type": "main", "index": 0 }]] },
+    "Send Bid to Fred":            { "main": [[{ "node": "Respond 200", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "linda" }, { "name": "marine" }, { "name": "bids" }]
+}
