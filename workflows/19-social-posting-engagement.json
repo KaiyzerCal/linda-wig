@@ -25,10 +25,12 @@
         "conditions": {
           "options": { "caseSensitive": false },
           "conditions": [
-            { "id": "twitter", "leftValue": "={{ $json.platform }}", "rightValue": "twitter", "operator": { "type": "string", "operation": "equals" } },
+            { "id": "twitter",   "leftValue": "={{ $json.platform }}", "rightValue": "twitter",   "operator": { "type": "string", "operation": "equals" } },
             { "id": "instagram", "leftValue": "={{ $json.platform }}", "rightValue": "instagram", "operator": { "type": "string", "operation": "equals" } },
-            { "id": "linkedin", "leftValue": "={{ $json.platform }}", "rightValue": "linkedin", "operator": { "type": "string", "operation": "equals" } },
-            { "id": "tiktok", "leftValue": "={{ $json.platform }}", "rightValue": "tiktok", "operator": { "type": "string", "operation": "equals" } }
+            { "id": "linkedin",  "leftValue": "={{ $json.platform }}", "rightValue": "linkedin",  "operator": { "type": "string", "operation": "equals" } },
+            { "id": "tiktok",   "leftValue": "={{ $json.platform }}", "rightValue": "tiktok",   "operator": { "type": "string", "operation": "equals" } },
+            { "id": "facebook",  "leftValue": "={{ $json.platform }}", "rightValue": "facebook",  "operator": { "type": "string", "operation": "equals" } },
+            { "id": "youtube",   "leftValue": "={{ $json.platform }}", "rightValue": "youtube",   "operator": { "type": "string", "operation": "equals" } }
           ]
         }
       },
@@ -130,6 +132,44 @@
 
     {
       "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $env.FACEBOOK_PAGE_ID }}/feed",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "Bearer {{ $env.FACEBOOK_PAGE_ACCESS_TOKEN }}" }] },
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "message", "value": "={{ $json.content_body.slice(0, 63206) }}" }
+        ]}
+      },
+      "id": "post-facebook", "name": "Post to Facebook Page", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, 740]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// YouTube requires a video file — text-only posts are not supported.\n// Expects $json.video_url on the queue item (e.g. from a video generation step).\n// The content_body is used as the video description + title.\nconst videoUrl = $json.video_url || null;\nif (!videoUrl) {\n  console.log('[YouTube] Skipped — no video_url on queue item id:', $json.id);\n  return [{ json: { ...$json, youtube_skipped: true, reason: 'no_video_url' } }];\n}\n// Parse title from first line of content, rest is description\nconst lines = ($json.content_body || '').split('\\n');\nconst title = lines[0].slice(0, 100);\nconst description = lines.slice(1).join('\\n').slice(0, 5000) || $json.content_body.slice(0, 5000);\nreturn [{ json: { ...$json, yt_title: title, yt_description: description, yt_video_url: videoUrl } }];"
+      },
+      "id": "youtube-check", "name": "YouTube: Check for Video URL", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1280, 900]
+    },
+    {
+      "parameters": {
+        "conditions": { "options": {}, "conditions": [{ "id": "1", "leftValue": "={{ $json.youtube_skipped }}", "rightValue": true, "operator": { "type": "boolean", "operation": "notEquals" } }] }
+      },
+      "id": "youtube-has-video", "name": "YouTube: Has Video?", "type": "n8n-nodes-base.filter", "typeVersion": 2, "position": [1540, 900]
+    },
+    {
+      "parameters": {
+        "title": "={{ $json.yt_title }}",
+        "categoryId": "22",
+        "description": "={{ $json.yt_description }}",
+        "privacyStatus": "public",
+        "url": "={{ $json.yt_video_url }}"
+      },
+      "id": "post-youtube", "name": "Upload to YouTube", "type": "n8n-nodes-base.youTube", "typeVersion": 1, "position": [1800, 900],
+      "credentials": { "youTubeOAuth2Api": { "id": "youtube-creds", "name": "YouTube" } }
+    },
+
+    {
+      "parameters": {
         "jsCode": "// Collect results from all platform branches and return a unified status\nconst queue_id = $input.first()?.json?.id || null;\nconst platform = $input.first()?.json?.platform || 'unknown';\nreturn [{ json: { queue_id, platform, posted_at: new Date().toISOString() } }];"
       },
       "id": "collect-result", "name": "Collect Result", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [2320, 340]
@@ -153,7 +193,9 @@
         [{ "node": "Post to X (Twitter)", "type": "main", "index": 0 }],
         [{ "node": "Build Instagram Card HTML", "type": "main", "index": 0 }],
         [{ "node": "Post to LinkedIn", "type": "main", "index": 0 }],
-        [{ "node": "TikTok: Check for Video URL", "type": "main", "index": 0 }]
+        [{ "node": "TikTok: Check for Video URL", "type": "main", "index": 0 }],
+        [{ "node": "Post to Facebook Page", "type": "main", "index": 0 }],
+        [{ "node": "YouTube: Check for Video URL", "type": "main", "index": 0 }]
       ]
     },
     "Post to X (Twitter)":               { "main": [[{ "node": "Collect Result", "type": "main", "index": 0 }]] },
@@ -165,6 +207,10 @@
     "TikTok: Check for Video URL":       { "main": [[{ "node": "TikTok: Has Video?", "type": "main", "index": 0 }]] },
     "Has Video?":                        { "main": [[{ "node": "Post to TikTok", "type": "main", "index": 0 }]] },
     "Post to TikTok":                    { "main": [[{ "node": "Collect Result", "type": "main", "index": 0 }]] },
+    "Post to Facebook Page":             { "main": [[{ "node": "Collect Result", "type": "main", "index": 0 }]] },
+    "YouTube: Check for Video URL":      { "main": [[{ "node": "YouTube: Has Video?", "type": "main", "index": 0 }]] },
+    "YouTube: Has Video?":               { "main": [[{ "node": "Upload to YouTube", "type": "main", "index": 0 }]] },
+    "Upload to YouTube":                 { "main": [[{ "node": "Collect Result", "type": "main", "index": 0 }]] },
     "Collect Result":                    { "main": [[{ "node": "Mark Posted in Supabase", "type": "main", "index": 0 }]] }
   },
   "settings": { "executionOrder": "v1" },

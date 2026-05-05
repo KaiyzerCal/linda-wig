@@ -31,18 +31,18 @@
         "sendBody": true,
         "bodyParameters": { "parameters": [
           { "name": "model", "value": "claude-sonnet-4-6" },
-          { "name": "max_tokens", "value": "800" },
+          { "name": "max_tokens", "value": "1200" },
           { "name": "system", "value": "={{ $('Get Content Prompt').item.json.content }}" },
-          { "name": "messages", "value": "=[{\"role\": \"user\", \"content\": \"Asset: {{ $('Pick Today\\'s Asset + Topic').item.json.asset }}\\nBrand: {{ $('Pick Today\\'s Asset + Topic').item.json.brand }}\\nTopic: {{ $('Pick Today\\'s Asset + Topic').item.json.topic }}\\nDate: {{ $('Pick Today\\'s Asset + Topic').item.json.date }}\"}]" }
+          { "name": "messages", "value": "=[{\"role\": \"user\", \"content\": \"Asset: {{ $('Pick Today\\'s Asset + Topic').item.json.asset }}\\nBrand: {{ $('Pick Today\\'s Asset + Topic').item.json.brand }}\\nTopic: {{ $('Pick Today\\'s Asset + Topic').item.json.topic }}\\nDate: {{ $('Pick Today\\'s Asset + Topic').item.json.date }}\\nGenerate content for 6 platforms: (1) X/Twitter thread opener + 3 follow-up tweets (2) Instagram caption (3) LinkedIn post (4) TikTok script 30-45 sec (5) Facebook post (6) YouTube Shorts description + title\"}]" }
         ]}
       },
       "id": "gen-content", "name": "Generate Content (Claude)", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1020, 300]
     },
     {
       "parameters": {
-        "jsCode": "const raw = $('Generate Content (Claude)').item.json.content?.[0]?.text || '';\nconst asset = $('Pick Today\\'s Asset + Topic').item.json.asset;\nconst brand = $('Pick Today\\'s Asset + Topic').item.json.brand;\nconst platforms = ['twitter', 'instagram', 'linkedin', 'tiktok'];\n\n// Parse out sections — Claude writes them with headers like (1) (2) (3) (4)\nconst sections = raw.split(/\\(\\d\\)/).filter(s => s.trim());\nconst results = [];\nfor (let i = 0; i < platforms.length; i++) {\n  results.push({ json: {\n    platform: platforms[i],\n    asset,\n    brand,\n    content_type: 'organic',\n    content_body: (sections[i] || raw).trim(),\n    status: 'pending'\n  }});\n}\nreturn results;"
+        "jsCode": "const raw = $('Generate Content (Claude)').item.json.content?.[0]?.text || '';\nconst asset = $('Pick Today\\'s Asset + Topic').item.json.asset;\nconst brand = $('Pick Today\\'s Asset + Topic').item.json.brand;\nconst platforms = ['twitter', 'instagram', 'linkedin', 'tiktok', 'facebook', 'youtube'];\n\n// Parse out sections — Claude writes them with headers like (1) (2) (3) (4) (5) (6)\nconst sections = raw.split(/\\(\\d\\)/).filter(s => s.trim());\nconst results = [];\nfor (let i = 0; i < platforms.length; i++) {\n  results.push({ json: {\n    platform: platforms[i],\n    asset,\n    brand,\n    content_type: 'organic',\n    content_body: (sections[i] || sections[0] || raw).trim(),\n    status: 'pending'\n  }});\n}\nreturn results;"
       },
-      "id": "parse-content", "name": "Parse Into 4 Posts", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1280, 300]
+      "id": "parse-content", "name": "Parse Into 6 Posts", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1280, 300]
     },
     {
       "parameters": {
@@ -64,7 +64,7 @@
     "Pick Today's Asset + Topic":  { "main": [[{ "node": "Get Content Prompt", "type": "main", "index": 0 }]] },
     "Get Content Prompt":          { "main": [[{ "node": "Generate Content (Claude)", "type": "main", "index": 0 }]] },
     "Generate Content (Claude)":   { "main": [[{ "node": "Parse Into 4 Posts", "type": "main", "index": 0 }]] },
-    "Parse Into 4 Posts":          { "main": [[{ "node": "Queue Content", "type": "main", "index": 0 }]] }
+    "Parse Into 6 Posts":          { "main": [[{ "node": "Queue Content", "type": "main", "index": 0 }]] }
   },
   "settings": { "executionOrder": "v1" },
   "tags": [{ "name": "linda" }, { "name": "content" }, { "name": "social" }]
