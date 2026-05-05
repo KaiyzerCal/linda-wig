@@ -144,7 +144,22 @@ const supabase = createClient(
 );
 
 // ── Agent memory helpers ───────────────────────────────────────────────────
+async function fireSearch(query) {
+  const url = `${process.env.SEARXNG_URL}/search?q=${encodeURIComponent(query)}&format=json`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`SearXNG responded ${res.status}`);
+  const data = await res.json();
+  return data.results.slice(0, 5).map(r => ({
+    title: r.title,
+    url: r.url,
+    snippet: r.content
+  }));
+}
 
+function parseSearchAction(text) {
+  const m = text.match(/\[SEARCH:\s*(.+?)\]/i);
+  return m ? { query: m[1].trim() } : null;
+}
 async function loadAgentMemory(agent) {
   const { data } = await supabase
     .from('agent_memory')
@@ -256,7 +271,7 @@ You can send a direct Slack message to Bishop. Use this for urgent flags, missio
 [SEND_SLACK]
 Your message to Bishop here.
 [/SEND_SLACK]
-
+To search the web, output [SEARCH: your query] anywhere in your reply. Example: [SEARCH: barbershops in Miami]. Results will be appended automatically. Use this whenever the user asks you to look something up or find current information.
 Use sparingly — Slack is for things that need a response, not for routine updates. Do not announce it. Just include it.
 
 MEMORY CAPABILITY:
@@ -565,12 +580,14 @@ app.post('/linda/chat', async (req, res) => {
     const socialAction   = parseSocialAction(rawReply);
     const outreachAction = parseOutreachAction(rawReply);
     const slackAction    = parseSlackAction(rawReply);
+    const searchAction   = parseSearchAction(rawReply);
     let reply = rawReply
       .replace(/\[REMEMBER:[^\]]+\]/gi, '')
       .replace(/\[SEND_EMAIL\][\s\S]*?\[\/SEND_EMAIL\]/i, '')
       .replace(/\[SEND_POST\][\s\S]*?\[\/SEND_POST\]/i, '')
       .replace(/\[SEND_OUTREACH\][\s\S]*?\[\/SEND_OUTREACH\]/i, '')
       .replace(/\[SEND_SLACK\][\s\S]*?\[\/SEND_SLACK\]/i, '')
+      .replace(/\[SEARCH:[^\]]+\]/gi, '')
       .trim();
 
     let emailResult = null;
@@ -620,7 +637,18 @@ app.post('/linda/chat', async (req, res) => {
       ]);
       if (saveError) console.error('[Supabase save error]', saveError.message);
     }
-
+let searchResult = null;
+if (searchAction) {
+  try {
+    const results = await fireSearch(searchAction.query);
+    const summary = results.map((r, i) => `${i+1}. [${r.title}](${r.url})\n${r.snippet}`).join('\n\n');
+    reply += `\n\n**Search results for "${searchAction.query}":**\n\n${summary}`;
+    searchResult = { success: true, query: searchAction.query, count: results.length };
+  } catch (e) {
+    reply += `\n\n[Search failed: ${e.message}]`;
+    searchResult = { success: false, error: e.message };
+  }
+}
     let slackResult = null;
     if (slackAction) {
       try {
