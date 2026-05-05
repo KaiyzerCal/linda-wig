@@ -14,7 +14,9 @@ app.use(cors());
 app.use('/pantheon/webhook', express.raw({ type: 'application/json' }));
 
 app.use(express.json({ limit: '25mb' }));
-app.use(express.static(path.join(__dirname)));
+// Note: express.static is intentionally NOT mounted at root to avoid
+// exposing server.js, .env, supabase-schema.sql, etc. All HTML pages
+// are served explicitly via their own route handlers below.
 
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'http://localhost:5678';
 const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || '';
@@ -1025,17 +1027,46 @@ async function runPantheonSession(personas, triggerType, headline, sourceUrl, so
   return sid;
 }
 
-// Serve pantheon.html with env vars injected for Supabase client
+// Serve pantheon.html with env vars injected for Supabase client.
+// Falls back to a holding page when pantheon.html has not yet been deployed —
+// this keeps the Stripe cancel_url (/pantheon) functional at all times.
 app.get('/pantheon', (req, res) => {
+  const pantheonPath = path.join(__dirname, 'pantheon.html');
+  if (!fs.existsSync(pantheonPath)) {
+    res.setHeader('Content-Type', 'text/html');
+    return res.status(200).send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Pantheon — Coming Soon</title>
+  <style>
+    body{margin:0;background:#050505;color:#d4c9b0;font-family:'Courier New',monospace;
+    display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;}
+    h1{font-size:1.4rem;letter-spacing:.15em;margin-bottom:1rem;}
+    p{color:#5a5a4a;font-size:.85rem;margin-bottom:2rem;}
+    a{color:#00E5FF;text-decoration:none;font-size:.8rem;letter-spacing:.1em;}
+  </style>
+</head>
+<body>
+  <div>
+    <h1>THE PANTHEON</h1>
+    <p>The chamber is being prepared.<br>Access will open shortly.</p>
+    <a href="/">← RETURN TO INTERFACE</a>
+  </div>
+</body>
+</html>`);
+  }
   try {
-    let html = fs.readFileSync(path.join(__dirname, 'pantheon.html'), 'utf8');
+    let html = fs.readFileSync(pantheonPath, 'utf8');
     html = html
       .replace('%%SUPABASE_URL%%', process.env.SUPABASE_URL || '')
       .replace('%%SUPABASE_ANON_KEY%%', process.env.SUPABASE_ANON_KEY || '');
     res.setHeader('Content-Type', 'text/html');
     res.send(html);
   } catch (err) {
-    res.status(500).send('Pantheon unavailable');
+    console.error('[Pantheon] Failed to read pantheon.html:', err.message);
+    res.redirect('/');
   }
 });
 
@@ -1374,7 +1405,18 @@ app.get('/sources', async (req, res) => {
   }
 });
 
-// Interface
+// Pantheon landing / paywall page.
+// Serves landing.html if present; falls back to /pantheon so the URL
+// remains valid regardless of deployment state.
+app.get('/landing', (req, res) => {
+  const landingPath = path.join(__dirname, 'landing.html');
+  if (fs.existsSync(landingPath)) {
+    return res.sendFile(landingPath);
+  }
+  res.redirect('/pantheon');
+});
+
+// Root — Linda & Locke interface. Must be last so API routes match first.
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'interface.html'));
 });
