@@ -548,7 +548,7 @@ app.post('/linda/chat', async (req, res) => {
     if (crossContext) system.push({ type: 'text', text: crossContext });
 
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20251001',
+      model: 'claude-sonnet-4-5',
       max_tokens: 2048,
       system,
       messages
@@ -712,7 +712,7 @@ Technical queue pending (${queue?.length || 0}): ${JSON.stringify(queue?.map(q =
 Open with a statement about what matters most today. Under 120 words. Pure signal.`;
 
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20251001',
+      model: 'claude-sonnet-4-5',
       max_tokens: 1024,
       system: [{ type: 'text', text: LINDA_SYSTEM, cache_control: { type: 'ephemeral' } }],
       messages: [{ role: 'user', content: briefPrompt }]
@@ -789,7 +789,7 @@ app.post('/locke/chat', async (req, res) => {
     if (crossContext) system.push({ type: 'text', text: crossContext });
 
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20251001',
+      model: 'claude-sonnet-4-5',
       max_tokens: 8096,
       system,
       messages
